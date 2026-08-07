@@ -132,17 +132,19 @@ def login_with_password(session: requests.Session, headers: dict) -> dict | None
         "raw": dict,
       }
     """
-    # 先访问登录页面（可能触发 WAF 等）
+    # Step 1: 先访问登录页面（获取页面状态，触发初始化）
     try:
-        session.get(f"{SITE_URL}/login?expired=true", headers=headers, timeout=30)
+        login_page_headers = headers.copy()
+        login_page_headers["Referer"] = f"{SITE_URL}/login?expired=true"
+        resp = session.get(f"{SITE_URL}/login?expired=true", headers=login_page_headers, timeout=30)
+        log("INFO", f"预访问登录页面: HTTP {resp.status_code}")
     except Exception as e:
-        log("WARN", f"预访问登录页面失败: {e}")
+        log("WARN", f"预访问登录页面失败（继续尝试登录）: {e}")
 
-    # 调用登录 API
+    # Step 2: 调用登录 API
     login_url = f"{SITE_URL}/api/user/login?turnstile="
     login_headers = headers.copy()
     login_headers["Content-Type"] = "application/json"
-    login_headers["X-Requested-With"] = "XMLHttpRequest"
     login_headers["Referer"] = f"{SITE_URL}/login?expired=true"
 
     payload = {
@@ -154,14 +156,36 @@ def login_with_password(session: requests.Session, headers: dict) -> dict | None
         resp = session.post(login_url, headers=login_headers, json=payload, timeout=30)
         log("INFO", f"登录接口响应: HTTP {resp.status_code}")
 
+        # 调试：打印响应内容前 500 字符
+        response_preview = resp.text[:500] if resp.text else "(空响应)"
+        log("INFO", f"响应内容预览: {response_preview}")
+
         if resp.status_code == 200:
-            data = resp.json()
+            # 检查响应是否为空
+            if not resp.text or not resp.text.strip():
+                log("ERROR", "登录接口返回空响应")
+                return None
+
+            try:
+                data = resp.json()
+            except json.JSONDecodeError as e:
+                log("ERROR", f"响应不是 JSON 格式: {e}")
+                log("ERROR", f"完整响应内容: {resp.text[:1000]}")
+                # 检查是否被重定向到 HTML 页面
+                if "<html" in resp.text.lower() or "<!doctype" in resp.text.lower():
+                    log("ERROR", "响应是 HTML 页面，可能被 WAF 拦截或需要人机验证")
+                return None
+
             if data.get("success"):
                 user_data = data.get("data", {})
                 user_id = user_data.get("id")
                 username = user_data.get("username", USERNAME)
                 checked_in = user_data.get("checked_in")  # 登录前是否已签到
                 quota = user_data.get("quota", 0)
+
+                if not isinstance(user_id, int):
+                    log("ERROR", f"登录响应缺少有效的用户 ID: {user_id}")
+                    return None
 
                 log("INFO", f"✅ 登录成功！用户 ID: {user_id}, 用户名: {username}")
 
@@ -175,12 +199,15 @@ def login_with_password(session: requests.Session, headers: dict) -> dict | None
             else:
                 error_msg = data.get("message", "未知错误")
                 log("ERROR", f"登录失败: {error_msg}")
+                return None
         else:
             log("ERROR", f"登录失败: HTTP {resp.status_code}: {resp.text[:200]}")
+            return None
     except Exception as e:
-        log("ERROR", f"登录请求异常: {e}")
-
-    return None
+        log("ERROR", f"登录请求异常: {type(e).__name__}: {e}")
+        import traceback
+        log("ERROR", traceback.format_exc())
+        return None
 
 def get_user_info(session: requests.Session, headers: dict, user_id: int) -> dict | None:
     """
