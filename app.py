@@ -81,13 +81,54 @@ def browser_login_complete() -> dict | None:
             log("INFO", "等待页面渲染...")
             page.wait_for_timeout(2000)
 
-            # Step 2: 填写表单（不使用 wait_for，直接操作）
+            # Step 2: 填写表单（使用显式等待）
             log("INFO", "Step 2: 填写登录表单...")
 
-            # 填写用户名（先点击激活，再输入）
+            # 使用 page.evaluate 等待元素真正可见
+            wait_result = page.evaluate("""
+                async () => {
+                    let attempts = 0;
+                    const maxAttempts = 30; // 最多等待 15 秒
+
+                    while (attempts < maxAttempts) {
+                        const username = document.querySelector('input#username');
+                        const password = document.querySelector('input#password');
+                        const submit = document.querySelector('button[type="submit"]');
+
+                        if (username && password && submit &&
+                            username.offsetParent !== null &&
+                            password.offsetParent !== null &&
+                            submit.offsetParent !== null) {
+                            return {
+                                success: true,
+                                waitTime: attempts * 500
+                            };
+                        }
+
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                        attempts++;
+                    }
+
+                    return {
+                        success: false,
+                        hasUsername: !!document.querySelector('input#username'),
+                        hasPassword: !!document.querySelector('input#password'),
+                        hasSubmit: !!document.querySelector('button[type="submit"]')
+                    };
+                }
+            """)
+
+            if not wait_result.get("success"):
+                raise Exception(f"表单元素未出现: {wait_result}")
+
+            log("INFO", f"  表单元素已就绪（等待 {wait_result.get('waitTime')}ms）")
+
+            # 填写用户名（使用 locator 并等待）
             try:
-                page.click('input#username', timeout=10000)
-                page.fill('input#username', USERNAME, timeout=5000)
+                username_locator = page.locator('input#username')
+                username_locator.wait_for(state="visible", timeout=5000)
+                username_locator.click(timeout=5000)
+                username_locator.fill(USERNAME, timeout=5000)
                 log("INFO", "  ✓ 已填写用户名")
             except Exception as e:
                 raise Exception(f"填写用户名失败: {e}")
@@ -97,8 +138,10 @@ def browser_login_complete() -> dict | None:
 
             # 填写密码
             try:
-                page.click('input#password', timeout=10000)
-                page.fill('input#password', PASSWORD, timeout=5000)
+                password_locator = page.locator('input#password')
+                password_locator.wait_for(state="visible", timeout=5000)
+                password_locator.click(timeout=5000)
+                password_locator.fill(PASSWORD, timeout=5000)
                 log("INFO", "  ✓ 已填写密码")
             except Exception as e:
                 raise Exception(f"填写密码失败: {e}")
@@ -109,7 +152,9 @@ def browser_login_complete() -> dict | None:
             # Step 3: 点击提交按钮
             log("INFO", "Step 3: 点击提交按钮...")
             try:
-                page.click('button[type="submit"]', timeout=10000)
+                submit_locator = page.locator('button[type="submit"]')
+                submit_locator.wait_for(state="visible", timeout=5000)
+                submit_locator.click(timeout=5000)
                 log("INFO", "  ✓ 已点击提交按钮")
             except Exception as e:
                 raise Exception(f"点击提交按钮失败: {e}")
