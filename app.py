@@ -2,27 +2,20 @@
 
 import os
 import sys
-import json
 import time
-import http.cookiejar
-import urllib.request
-import urllib.error
-import urllib.parse
-import subprocess
 import traceback
-from datetime import datetime, timezone, timedelta
-from playwright.sync_api import sync_playwright
+from datetime import datetime
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 # 环境变量配置
-USERNAME     = os.getenv("USERNAME") or ""  # 用户名（邮箱），必填
-PASSWORD     = os.getenv("PASSWORD") or ""  # 密码，必填
-TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN") or ""  # Telegram bot token，不需要通知可以留空
-TG_CHAT_ID   = os.getenv("TG_CHAT_ID") or ""    # Telegram chat id
+USERNAME = os.getenv("USERNAME") or ""
+PASSWORD = os.getenv("PASSWORD") or ""
+TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN") or ""
+TG_CHAT_ID = os.getenv("TG_CHAT_ID") or ""
 
 SITE_URL = "https://agentrouter.org"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 
-# 工具函数
 def log(level: str, msg: str):
     """带时间戳的日志输出"""
     ts = datetime.now().strftime("%H:%M:%S")
@@ -51,11 +44,10 @@ def send_telegram(message: str) -> bool:
         log("ERROR", f"Telegram 发送失败: {e}")
         return False
 
-# 使用 Playwright 完成整个登录流程（在浏览器内）
-def browser_login_complete() -> dict:
+def browser_login_complete() -> dict | None:
     """
-    使用 Playwright 在浏览器内完成整个登录流程。
-    避免切换到 urllib，以免触发 WAF 验证。
+    使用 Playwright 完成整个登录流程。
+    经过 jshook 调研验证的可靠流程。
     """
     log("INFO", f"使用浏览器自动化登录 {SITE_URL}...")
 
@@ -69,6 +61,7 @@ def browser_login_complete() -> dict:
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
+                "--disable-blink-features=AutomationControlled",
             ],
         )
 
@@ -83,282 +76,135 @@ def browser_login_complete() -> dict:
             # Step 1: 访问登录页面
             log("INFO", "Step 1: 访问登录页面...")
             page.goto(f"{SITE_URL}/login", wait_until="networkidle", timeout=30000)
+
+            # 等待页面完全加载（等待 2 秒让 React 渲染完成）
+            log("INFO", "等待页面渲染...")
             page.wait_for_timeout(2000)
 
-            # Step 2: 填写表单
+            # Step 2: 填写表单（不使用 wait_for，直接操作）
             log("INFO", "Step 2: 填写登录表单...")
 
-            # 使用精确的选择器（从 jshook 分析得出）
+            # 填写用户名（先点击激活，再输入）
             try:
-                # 填写用户名
-                username_input = page.locator('input#username')
-                username_input.wait_for(state="visible", timeout=5000)
-                username_input.fill(USERNAME)
+                page.click('input#username', timeout=10000)
+                page.fill('input#username', USERNAME, timeout=5000)
                 log("INFO", "  ✓ 已填写用户名")
-
-                # 填写密码
-                password_input = page.locator('input#password')
-                password_input.wait_for(state="visible", timeout=5000)
-                password_input.fill(PASSWORD)
-                log("INFO", "  ✓ 已填写密码")
-
-                page.wait_for_timeout(1000)
-
             except Exception as e:
-                raise Exception(f"填写表单失败: {e}")
+                raise Exception(f"填写用户名失败: {e}")
 
-            # Step 3: 点击登录按钮
+            # 等待一下
+            page.wait_for_timeout(500)
+
+            # 填写密码
+            try:
+                page.click('input#password', timeout=10000)
+                page.fill('input#password', PASSWORD, timeout=5000)
+                log("INFO", "  ✓ 已填写密码")
+            except Exception as e:
+                raise Exception(f"填写密码失败: {e}")
+
+            # 等待一下
+            page.wait_for_timeout(1000)
+
+            # Step 3: 点击提交按钮
             log("INFO", "Step 3: 点击提交按钮...")
             try:
-                # 点击"继续"按钮（type=submit）
-                submit_button = page.locator('button[type="submit"]')
-                submit_button.wait_for(state="visible", timeout=5000)
-                submit_button.click()
+                page.click('button[type="submit"]', timeout=10000)
                 log("INFO", "  ✓ 已点击提交按钮")
             except Exception as e:
                 raise Exception(f"点击提交按钮失败: {e}")
 
             # Step 4: 等待登录完成
-            log("INFO", "Step 4: 等待登录完成...")
+            log("INFO", "Step 4: 等待登录响应...")
             page.wait_for_timeout(3000)
 
             # 检查是否有滑块验证
-            try:
-                captcha = page.locator('#nc_1_n1z, .nc-container, [class*="captcha"]').first
-                if captcha.is_visible(timeout=2000):
-                    log("WARN", "检测到滑块验证，等待处理...")
-                    page.wait_for_timeout(5000)
-            except:
-                pass
+            has_captcha = page.evaluate("""
+                () => !!document.querySelector('#nc_1_n1z, .nc-container, [class*="captcha"]')
+            """)
 
-            # 再等待一下，确保跳转完成
-            page.wait_for_timeout(2000)
+            if has_captcha:
+                log("WARN", "检测到滑块验证码，等待处理...")
+                page.wait_for_timeout(5000)
 
             current_url = page.url
             log("INFO", f"  当前 URL: {current_url}")
 
             # Step 5: 使用浏览器内的 fetch API 获取用户信息
             log("INFO", "Step 5: 获取用户信息...")
-            try:
-                api_response = page.evaluate("""
-                    async () => {
-                        try {
-                            const resp = await fetch('/api/user/self', {
-                                method: 'GET',
-                                headers: {
-                                    'Accept': 'application/json'
-                                }
-                            });
-                            const data = await resp.json();
-                            return {success: true, data: data};
-                        } catch (err) {
-                            return {success: false, error: err.toString()};
-                        }
+
+            api_result = page.evaluate("""
+                async () => {
+                    try {
+                        const resp = await fetch('/api/user/self', {
+                            method: 'GET',
+                            headers: { 'Accept': 'application/json' }
+                        });
+                        const data = await resp.json();
+
+                        return {
+                            success: true,
+                            status: resp.status,
+                            apiSuccess: data.success,
+                            data: data.data || null,
+                            message: data.message || null
+                        };
+                    } catch (err) {
+                        return {
+                            success: false,
+                            error: err.toString()
+                        };
                     }
-                """)
-
-                if api_response.get("success"):
-                    api_data = api_response.get("data", {})
-                    if api_data.get("success"):
-                        user_data = api_data.get("data", {})
-                        user_id = user_data.get("id")
-                        username = user_data.get("username")
-                        quota = user_data.get("quota", 0)
-
-                        log("INFO", f"  ✓ 用户 ID: {user_id}")
-                        log("INFO", f"  ✓ 用户名: {username}")
-                        log("INFO", f"  ✓ 余额: {quota}")
-
-                        result = {
-                            "user_id": user_id,
-                            "username": username,
-                            "quota": quota,
-                            "checked_in": None,  # 登录即签到
-                        }
-                    else:
-                        raise Exception(f"API 返回失败: {api_data}")
-                else:
-                    raise Exception(f"API 调用失败: {api_response.get('error')}")
-
-            except Exception as e:
-                log("WARN", f"通过 API 获取用户信息失败: {e}")
-                # 尝试从页面元素中提取信息
-                log("INFO", "尝试从页面中提取用户信息...")
-                result = {
-                    "user_id": 0,
-                    "username": USERNAME,
-                    "quota": 0,
-                    "checked_in": None,
                 }
+            """)
+
+            if not api_result.get("success"):
+                raise Exception(f"API 调用失败: {api_result.get('error')}")
+
+            if api_result.get("status") == 401:
+                raise Exception(f"登录失败: {api_result.get('message', '未授权')}")
+
+            if not api_result.get("apiSuccess"):
+                raise Exception(f"登录失败: {api_result.get('message', '未知错误')}")
+
+            user_data = api_result.get("data", {})
+            user_id = user_data.get("id")
+            username = user_data.get("username")
+            quota = user_data.get("quota", 0)
+
+            if not user_id:
+                raise Exception("登录响应缺少用户 ID")
+
+            log("INFO", f"  ✓ 用户 ID: {user_id}")
+            log("INFO", f"  ✓ 用户名: {username}")
+            log("INFO", f"  ✓ 余额: {quota}")
+
+            result = {
+                "user_id": user_id,
+                "username": username,
+                "quota": quota,
+                "checked_in": None,  # 登录即签到
+            }
+
+        except PlaywrightTimeoutError as e:
+            log("ERROR", f"页面操作超时: {e}")
+            log("ERROR", f"当前 URL: {page.url}")
+            # 截图用于调试
+            try:
+                screenshot_path = "error_screenshot.png"
+                page.screenshot(path=screenshot_path)
+                log("INFO", f"已保存错误截图: {screenshot_path}")
+            except:
+                pass
 
         except Exception as e:
             log("ERROR", f"浏览器自动化登录失败: {e}")
-            import traceback
             log("ERROR", traceback.format_exc())
 
         finally:
             browser.close()
 
     return result
-
-# 以下 ApiClient 类已弃用（改用浏览器自动化）
-# HTTP 客户端（参考 newapi-checkin 实现）
-class ApiClient_DEPRECATED:
-    def __init__(self, base_url: str, initial_cookies: dict):
-        self.base_url = base_url.rstrip("/")
-        self.cookie_jar = http.cookiejar.CookieJar()
-
-        # 将初始 Cookie 添加到 CookieJar
-        for name, value in initial_cookies.items():
-            cookie = http.cookiejar.Cookie(
-                version=0,
-                name=name,
-                value=value,
-                port=None,
-                port_specified=False,
-                domain="agentrouter.org",
-                domain_specified=True,
-                domain_initial_dot=False,
-                path="/",
-                path_specified=True,
-                secure=True,
-                expires=None,
-                discard=True,
-                comment=None,
-                comment_url=None,
-                rest={},
-                rfc2109=False
-            )
-            self.cookie_jar.set_cookie(cookie)
-
-        self.opener = urllib.request.build_opener(
-            urllib.request.HTTPCookieProcessor(self.cookie_jar)
-        )
-        self.user_id = None
-        self.username = None
-
-    def _make_request(
-        self,
-        path: str,
-        method: str = "GET",
-        body: dict = None,
-        referer: str = "/console",
-        parse_json: bool = True,
-        timeout: float = 30.0
-    ):
-        url = self.base_url + path
-        headers = {
-            "User-Agent": USER_AGENT,
-            "Accept": "application/json, text/plain, */*",
-            "Referer": self.base_url + referer,
-            "Cache-Control": "no-store",
-        }
-
-        request_data = None
-        if body is not None:
-            headers["Content-Type"] = "application/json"
-            headers["Origin"] = self.base_url
-            request_data = json.dumps(body, ensure_ascii=False).encode("utf-8")
-
-        if self.user_id is not None:
-            headers["New-API-User"] = str(self.user_id)
-
-        request = urllib.request.Request(url, data=request_data, headers=headers, method=method)
-
-        try:
-            with self.opener.open(request, timeout=timeout) as response:
-                text = response.read().decode("utf-8", "replace")
-
-                if not parse_json:
-                    return text
-
-                try:
-                    return json.loads(text)
-                except json.JSONDecodeError as e:
-                    log("ERROR", f"响应不是 JSON 格式: {e}")
-                    log("ERROR", f"响应内容: {text[:500]}")
-                    raise ValueError(f"响应不是 JSON: {text[:200]}")
-
-        except urllib.error.HTTPError as exc:
-            text = exc.read().decode("utf-8", "replace")
-            log("ERROR", f"HTTP {exc.code}: {text[:500]}")
-            raise ValueError(f"HTTP {exc.code}: {text[:200]}")
-        except urllib.error.URLError as exc:
-            log("ERROR", f"网络错误: {exc.reason}")
-            raise ValueError(f"网络错误: {exc.reason}")
-        except Exception as exc:
-            log("ERROR", f"请求异常: {exc}")
-            raise
-
-    def login(self, username: str, password: str) -> dict:
-        """
-        登录流程（完全参考 newapi-checkin）
-        """
-        log("INFO", "Step 1: 预访问登录页面...")
-        try:
-            self._make_request(
-                "/login?expired=true",
-                method="GET",
-                referer="/login?expired=true",
-                parse_json=False
-            )
-            log("INFO", "✓ 预访问成功，Cookie 已更新")
-        except Exception as e:
-            log("WARN", f"预访问失败（继续尝试登录）: {e}")
-
-        # 等待一下，让 Cookie 生效
-        time.sleep(2)
-
-        log("INFO", "Step 2: 调用登录 API...")
-        payload = self._make_request(
-            "/api/user/login?turnstile=",
-            method="POST",
-            body={"username": username, "password": password},
-            referer="/login?expired=true"
-        )
-
-        if not payload.get("success"):
-            error_msg = payload.get("message", "登录失败")
-            raise ValueError(error_msg)
-
-        data = payload.get("data", {})
-        user_id = data.get("id")
-        username_ret = data.get("username", username)
-        checked_in = data.get("checked_in")
-        quota = data.get("quota", 0)
-
-        if not isinstance(user_id, int):
-            raise ValueError("登录响应缺少有效的用户 ID")
-
-        self.user_id = user_id
-        self.username = username_ret
-
-        log("INFO", f"✅ 登录成功！用户 ID: {user_id}, 用户名: {username_ret}")
-
-        return {
-            "user_id": user_id,
-            "username": username_ret,
-            "checked_in": bool(checked_in) if isinstance(checked_in, bool) else None,
-            "quota": quota,
-        }
-
-    def get_user_info(self) -> dict:
-        """获取用户信息"""
-        if self.user_id is None:
-            raise ValueError("未登录")
-
-        payload = self._make_request("/api/user/self")
-
-        if not payload.get("success"):
-            raise ValueError("获取用户信息失败")
-
-        data = payload.get("data", {})
-        return {
-            "quota": data.get("quota", 0),
-            "used_quota": data.get("used_quota", 0),
-            "username": data.get("username", ""),
-            "id": data.get("id", 0),
-        }
 
 def format_balance(quota: int) -> str:
     """将 quota 转换为美元显示（假设 500000 = $1）"""
@@ -369,7 +215,6 @@ def format_balance(quota: int) -> str:
         return f"{int(balance)}$"
     return f"{balance:.2f}$"
 
-# 主流程
 def run_checkin():
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -398,34 +243,20 @@ def run_checkin():
 
     user_id = login_result.get("user_id", 0)
     username = login_result.get("username", USERNAME)
-    checked_in_before = login_result.get("checked_in")
-    first_balance = format_balance(login_result.get("quota", 0))
+    balance = format_balance(login_result.get("quota", 0))
 
+    log("INFO", f"✅ 登录成功！")
     log("INFO", f"用户 ID: {user_id}")
     log("INFO", f"用户名: {username}")
-    log("INFO", f"初始余额: {first_balance}")
+    log("INFO", f"当前余额: {balance}")
+    log("INFO", f"🎁 通过登录完成签到")
 
-    # ---------- Step 2: 等待 3 秒（登录即签到，余额可能延迟更新）----------
-    log("INFO", "等待 3 秒...")
-    time.sleep(3)
-
-    # 余额可能已在登录时获取，这里直接使用
-    second_balance = first_balance
-
-    # ---------- Step 3: 判断签到结果 ----------
-    # 登录即签到，成功登录就是成功签到
-    status_msg = "通过登录完成签到"
-    status_emoji = "🎁"
-
-    log("INFO", f"{status_emoji} {status_msg}")
-
-    # ---------- Step 4: 发送 Telegram 通知 ----------
+    # ---------- Step 2: 发送 Telegram 通知 ----------
     message = (
-        f"{status_emoji} <b>AgentRouter 签到通知</b>\n\n"
+        f"🎁 <b>AgentRouter 签到通知</b>\n\n"
         f"👤 登录账户: {USERNAME}\n"
-        f"💰 登录时余额: {first_balance}\n"
-        f"💰 当前余额: {second_balance}\n"
-        f"📋 状态: {status_msg}\n"
+        f"💰 当前余额: {balance}\n"
+        f"📋 状态: 通过登录完成签到\n"
         f"⏱️ 时间: {now_str}"
     )
 
