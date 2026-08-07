@@ -28,16 +28,45 @@
 
 #### 代理配置（推荐，用于绕过 WAF）：
 
+**方式 1：使用 HTTP/SOCKS5 代理**
+
 | Name | Value | 示例 |
 |------|-------|------|
 | `PROXY_SERVER` | 代理服务器地址 | `http://proxy.example.com:8080` 或 `socks5://proxy.example.com:1080` |
 | `PROXY_USERNAME` | 代理用户名 | `your-proxy-username`（如果需要认证） |
 | `PROXY_PASSWORD` | 代理密码 | `your-proxy-password`（如果需要认证） |
 
-**代理格式说明**：
-- HTTP 代理：`http://host:port`
-- HTTPS 代理：`https://host:port`
-- SOCKS5 代理：`socks5://host:port`
+**方式 2：使用 VMess 节点**
+
+如果你有 VMess 节点（如 `vmess://...`），需要配置以下参数：
+
+| Name | Value | 说明 | 示例 |
+|------|-------|------|------|
+| `VMESS_CONFIG` | 任意非空值 | 启用 VMess 模式 | `enabled` |
+| `VMESS_SERVER` | 服务器地址 | VMess 节点的 address | `162.159.40.181` |
+| `VMESS_PORT` | 端口 | VMess 节点的 port | `2096` |
+| `VMESS_UUID` | UUID | VMess 节点的 id | `f77d01d6-3b3d-465e-bd85-c267e81006f4` |
+| `VMESS_PATH` | WebSocket 路径 | VMess 节点的 path | `/f77d01d6-3b3d-465e-bd85-c267e81006f4-vm` |
+| `VMESS_HOST` | 主机名 | VMess 节点的 host | `populations-avi-stroke-urw.trycloudflare.com` |
+| `VMESS_SNI` | SNI | VMess 节点的 sni | `populations-avi-stroke-urw.trycloudflare.com` |
+
+**如何从 VMess 链接中提取参数**：
+
+```bash
+# 将你的 vmess:// 链接复制，去掉 "vmess://" 前缀
+# 然后用 base64 解码：
+echo "你的base64字符串" | base64 -d
+
+# 会得到类似这样的 JSON：
+{
+  "add": "162.159.40.181",      # → VMESS_SERVER
+  "port": "2096",                # → VMESS_PORT
+  "id": "f77d01d6-...",          # → VMESS_UUID
+  "path": "/f77d01d6-.../vm",    # → VMESS_PATH
+  "host": "populations-...",     # → VMESS_HOST
+  "sni": "populations-..."       # → VMESS_SNI
+}
+```
 
 #### Telegram 通知（可选）：
 

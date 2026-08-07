@@ -32,12 +32,75 @@ jobs:
           pip install requests playwright pynacl
           playwright install --with-deps chromium
 
+      # ---------- 设置 V2Ray 代理（如果配置了 VMESS_CONFIG）----------
+      - name: Setup V2Ray Proxy
+        if: ${{ secrets.VMESS_CONFIG != '' }}
+        run: |
+          # 下载 v2ray-core
+          wget -q https://github.com/v2fly/v2ray-core/releases/download/v5.21.0/v2ray-linux-64.zip
+          unzip -q v2ray-linux-64.zip -d v2ray
+          chmod +x v2ray/v2ray
+
+          # 创建配置文件
+          cat > config.json << 'EOF'
+          {
+            "inbounds": [
+              {
+                "port": 10808,
+                "protocol": "socks",
+                "settings": {
+                  "udp": true
+                }
+              }
+            ],
+            "outbounds": [
+              {
+                "protocol": "vmess",
+                "settings": {
+                  "vnext": [
+                    {
+                      "address": "${{ secrets.VMESS_SERVER }}",
+                      "port": ${{ secrets.VMESS_PORT }},
+                      "users": [
+                        {
+                          "id": "${{ secrets.VMESS_UUID }}",
+                          "alterId": 0,
+                          "security": "auto"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "streamSettings": {
+                  "network": "ws",
+                  "security": "tls",
+                  "wsSettings": {
+                    "path": "${{ secrets.VMESS_PATH }}",
+                    "headers": {
+                      "Host": "${{ secrets.VMESS_HOST }}"
+                    }
+                  },
+                  "tlsSettings": {
+                    "serverName": "${{ secrets.VMESS_SNI }}"
+                  }
+                }
+              }
+            ]
+          }
+          EOF
+
+          # 启动 v2ray（后台运行）
+          ./v2ray/v2ray run -c config.json &
+          sleep 3
+          echo "V2Ray 代理已启动在 socks5://127.0.0.1:10808"
+
       # ---------- 运行登录签到脚本 ----------
       - name: Run check-in script
         env:
           USERNAME: ${{ secrets.USERNAME }}
           PASSWORD: ${{ secrets.PASSWORD }}
-          PROXY_SERVER: ${{ secrets.PROXY_SERVER }}
+          # 如果配置了 VMESS，使用本地 SOCKS5 代理
+          PROXY_SERVER: ${{ secrets.VMESS_CONFIG != '' && 'socks5://127.0.0.1:10808' || secrets.PROXY_SERVER }}
           PROXY_USERNAME: ${{ secrets.PROXY_USERNAME }}
           PROXY_PASSWORD: ${{ secrets.PROXY_PASSWORD }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
