@@ -77,11 +77,47 @@ def browser_login_complete() -> dict | None:
             log("INFO", "Step 1: 访问登录页面...")
             page.goto(f"{SITE_URL}/login", wait_until="networkidle", timeout=30000)
 
-            # 等待页面完全加载（等待 2 秒让 React 渲染完成）
+            # 等待页面完全加载
             log("INFO", "等待页面渲染...")
-            page.wait_for_timeout(2000)
+            page.wait_for_timeout(3000)  # 增加到 3 秒
 
-            # Step 2: 填写表单（使用显式等待）
+            # 检查页面状态
+            page_info = page.evaluate("""
+                () => {
+                    return {
+                        url: window.location.href,
+                        title: document.title,
+                        readyState: document.readyState,
+                        bodyText: document.body?.innerText?.substring(0, 200) || '',
+                        hasInputs: document.querySelectorAll('input').length,
+                        hasButtons: document.querySelectorAll('button').length,
+                        hasForm: !!document.querySelector('form'),
+                        htmlPreview: document.documentElement.outerHTML.substring(0, 500)
+                    };
+                }
+            """)
+
+            log("INFO", f"  当前 URL: {page_info.get('url')}")
+            log("INFO", f"  页面标题: {page_info.get('title')}")
+            log("INFO", f"  输入框数量: {page_info.get('hasInputs')}")
+            log("INFO", f"  按钮数量: {page_info.get('hasButtons')}")
+
+            # 如果页面不对，截图并报错
+            if page_info.get('hasInputs') == 0:
+                log("ERROR", f"页面没有输入框！可能被重定向或拦截")
+                log("ERROR", f"页面文本预览: {page_info.get('bodyText')}")
+                log("ERROR", f"HTML 预览: {page_info.get('htmlPreview')}")
+
+                try:
+                    screenshot_path = "page_error.png"
+                    page.screenshot(path=screenshot_path, full_page=True)
+                    log("INFO", f"已保存页面截图: {screenshot_path}")
+                except:
+                    pass
+
+                raise Exception(f"登录页面加载异常，没有找到表单元素")
+
+            # Step 2: 填写表单（使用更宽松的等待策略）
             log("INFO", "Step 2: 填写登录表单...")
 
             # 使用 page.evaluate 等待元素真正可见
