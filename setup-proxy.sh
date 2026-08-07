@@ -1,6 +1,7 @@
 #!/bin/bash
 # setup-proxy.sh - 代理节点解析与 sing-box 启动
 # 环境变量: NODE_LINK（必填）- 单个代理节点链接
+
 export LC_ALL=C
 set -e
 
