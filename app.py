@@ -13,6 +13,11 @@ PASSWORD = os.getenv("PASSWORD") or ""
 TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN") or ""
 TG_CHAT_ID = os.getenv("TG_CHAT_ID") or ""
 
+# 代理配置（可选）
+PROXY_SERVER = os.getenv("PROXY_SERVER") or ""  # 格式: http://host:port 或 socks5://host:port
+PROXY_USERNAME = os.getenv("PROXY_USERNAME") or ""  # 代理用户名（如果需要）
+PROXY_PASSWORD = os.getenv("PROXY_PASSWORD") or ""  # 代理密码（如果需要）
+
 SITE_URL = "https://agentrouter.org"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 
@@ -47,9 +52,20 @@ def send_telegram(message: str) -> bool:
 def browser_login_complete() -> dict | None:
     """
     使用 Playwright 完成整个登录流程。
-    经过 jshook 调研验证的可靠流程。
+    支持代理配置绕过 WAF 检测。
     """
     log("INFO", f"使用浏览器自动化登录 {SITE_URL}...")
+
+    # 配置代理
+    proxy_config = None
+    if PROXY_SERVER:
+        proxy_config = {
+            "server": PROXY_SERVER,
+        }
+        if PROXY_USERNAME and PROXY_PASSWORD:
+            proxy_config["username"] = PROXY_USERNAME
+            proxy_config["password"] = PROXY_PASSWORD
+        log("INFO", f"使用代理: {PROXY_SERVER}")
 
     result = None
 
@@ -63,6 +79,7 @@ def browser_login_complete() -> dict | None:
                 "--disable-gpu",
                 "--disable-blink-features=AutomationControlled",
             ],
+            proxy=proxy_config,  # 设置代理
         )
 
         context = browser.new_context(

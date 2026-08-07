@@ -1,100 +1,129 @@
-## 🚀 AgentRouter 自动签到（GitHub Actions）
+# AgentRouter 自动签到脚本
 
-这是一个基于 GitHub Actions 的自动化脚本，用于定时登录签到 [AgentRouter](https://agentrouter.org) 服务。
+每天自动登录 [AgentRouter](https://agentrouter.org/) 完成签到，获取每日奖励。
 
-> **重要说明**：AgentRouter 采用**登录即签到**的模式，没有独立的签到 API。本脚本通过账号密码登录来完成每日签到。
+## ⚙️ 功能特性
 
-━━━━━━━━━━━━━━━━━━━━━━
+- ✅ 使用账号密码自动登录（登录即签到）
+- ✅ 支持代理配置，绕过 WAF 验证
+- ✅ Telegram 通知（可选）
+- ✅ GitHub Actions 自动运行（每天北京时间 10:00）
 
-### 🔐 Secrets 配置说明
+## 🚀 快速开始
 
-| Secret 名称         | 是否必填 | 说明                                              |
-|---------------------|----------|---------------------------------------------------|
-| USERNAME           | ✅ 必填  | AgentRouter 登录账号（通常是邮箱）                      |
-| PASSWORD           | ✅ 必填  | AgentRouter 登录密码                                  |
-| TG_BOT_TOKEN       | ❌ 可选  | Telegram Bot Token（用于发送通知）                     |
-| TG_CHAT_ID         | ❌ 可选  | Telegram Chat ID（接收通知的用户或群组 ID）             |
+### 1. Fork 本仓库
 
-━━━━━━━━━━━━━━━━━━━━━━
-
-## 📋 部署步骤
-
-### 1. Fork 本项目
-Fork 本项目到你的 GitHub 账户，然后在 `Actions` 菜单中启用工作流。
+点击右上角 **Fork** 按钮，将仓库复制到你的账号下。
 
 ### 2. 配置 Secrets
-在仓库的 `Settings` ➡ `Secrets and variables` ➡ `Actions` 中添加以下 Secrets：
 
-- **USERNAME**：你的 AgentRouter 登录邮箱
-- **PASSWORD**：你的 AgentRouter 登录密码
-- **TG_BOT_TOKEN**（可选）：Telegram 机器人 Token
-- **TG_CHAT_ID**（可选）：Telegram 聊天 ID
+前往仓库的 **Settings** → **Secrets and variables** → **Actions** → **New repository secret**，添加以下配置：
 
-### 3. 手动测试运行
-前往 `Actions` 菜单，选择工作流并手动触发一次，确认配置正确。
+#### 必须配置：
 
-━━━━━━━━━━━━━━━━━━━━━━
+| Name | Value | 说明 |
+|------|-------|------|
+| `USERNAME` | 你的邮箱 | AgentRouter 登录邮箱 |
+| `PASSWORD` | 你的密码 | AgentRouter 登录密码 |
 
-## ⏰ 运行时间
+#### 代理配置（推荐，用于绕过 WAF）：
 
-- **定时运行**：每天北京时间 10:00（UTC 02:00）自动执行
-- **手动触发**：可在 Actions 页面手动触发运行
+| Name | Value | 示例 |
+|------|-------|------|
+| `PROXY_SERVER` | 代理服务器地址 | `http://proxy.example.com:8080` 或 `socks5://proxy.example.com:1080` |
+| `PROXY_USERNAME` | 代理用户名 | `your-proxy-username`（如果需要认证） |
+| `PROXY_PASSWORD` | 代理密码 | `your-proxy-password`（如果需要认证） |
 
-━━━━━━━━━━━━━━━━━━━━━━
+**代理格式说明**：
+- HTTP 代理：`http://host:port`
+- HTTPS 代理：`https://host:port`
+- SOCKS5 代理：`socks5://host:port`
 
-## 🔔 Telegram 通知配置（可选）
+#### Telegram 通知（可选）：
 
-如需接收签到通知，需要配置 Telegram Bot：
+| Name | Value | 说明 |
+|------|-------|------|
+| `TG_BOT_TOKEN` | Bot Token | 从 [@BotFather](https://t.me/BotFather) 获取 |
+| `TG_CHAT_ID` | Chat ID | 你的 Telegram Chat ID |
 
-### 1. 创建 Telegram Bot
-1. 在 Telegram 中搜索 `@BotFather`
-2. 发送 `/newbot` 并按提示创建 Bot
-3. 保存 Bot Token（格式：`1234567890:ABCdefGHIjklMNOpqrsTUVwxyz`）
+### 3. 启用 GitHub Actions
 
-### 2. 获取 Chat ID
-1. 在 Telegram 中搜索 `@userinfobot`
-2. 发送任意消息，获取你的 Chat ID（纯数字）
+1. 前往仓库的 **Actions** 标签页
+2. 点击 **I understand my workflows, go ahead and enable them**
+3. 脚本将在每天北京时间 10:00 自动运行
 
-### 3. 配置到 Secrets
-将 Bot Token 和 Chat ID 分别配置到 `TG_BOT_TOKEN` 和 `TG_CHAT_ID`。
+### 4. 手动测试运行
 
-━━━━━━━━━━━━━━━━━━━━━━
+前往 **Actions** → 选择 **Ayrouter Daily Check-in** → 点击 **Run workflow**
 
-## 🛠️ 本地测试
-
-如需本地测试脚本：
+## 🔧 本地测试
 
 ```bash
 # 安装依赖
 pip install requests playwright
 playwright install chromium
 
-# 设置环境变量并运行
+# 设置环境变量
 export USERNAME="your-email@example.com"
 export PASSWORD="your-password"
+export PROXY_SERVER="http://your-proxy:port"  # 可选
+export PROXY_USERNAME="proxy-user"             # 可选
+export PROXY_PASSWORD="proxy-pass"             # 可选
+
+# 运行脚本
 python app.py
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━
+## 📋 工作原理
 
-## 📝 工作原理
+1. **登录即签到**：AgentRouter 的签到机制是"登录即完成签到"
+2. **浏览器自动化**：使用 Playwright 模拟真实浏览器登录
+3. **代理绕过 WAF**：通过住宅代理 IP 避免触发阿里云 WAF 滑块验证
+4. **每日自动运行**：GitHub Actions 定时任务
 
-1. 使用 Playwright 获取 WAF Cookie（绕过 Cloudflare 等防护）
-2. 使用账号密码调用 `/api/user/login` 接口登录
-3. 登录成功后，服务端自动完成签到（登录即签到）
-4. 获取账户余额信息并发送通知
+## ⚠️ 关于 WAF 验证
 
-━━━━━━━━━━━━━━━━━━━━━━
+AgentRouter 使用了阿里云 WAF，在以下情况会触发滑块验证：
+- GitHub Actions 等云服务 IP
+- 数据中心 IP
+- 频繁请求的 IP
 
-## ⚠️ 注意事项
+**解决方案**：
+1. ✅ **推荐**：配置住宅代理 IP（稳定可靠）
+2. ⚠️ 备选：使用 Session Cookie 模式（需定期手动更新）
 
-- 本项目仅供学习交流使用，请遵守 AgentRouter 服务条款
-- 密码存储在 GitHub Secrets 中，相对安全，但仍建议使用独立密码
-- 如遇登录失败，请检查账号密码是否正确
-- 建议开启 Telegram 通知以便及时了解签到状态
+## 🛠️ 常见问题
 
-━━━━━━━━━━━━━━━━━━━━━━
+### Q: 为什么需要代理？
+A: GitHub Actions 的 IP 会被 AgentRouter 的 WAF 识别为机器人，触发滑块验证。使用住宅代理可以绕过这个检测。
 
-## 📜 License
+### Q: 代理服务推荐？
+A: 
+- **Smartproxy**：性价比高，适合个人使用
+- **BrightData**：质量最好，但价格较贵
+- **IPRoyal**：价格便宜，中等质量
+
+### Q: 不想用代理怎么办？
+A: 可以改用 Session Cookie 模式，但需要每 30 天手动更新一次 Cookie。
+
+### Q: 如何获取 Telegram Chat ID？
+A: 
+1. 向 [@userinfobot](https://t.me/userinfobot) 发送任意消息
+2. Bot 会返回你的 Chat ID
+
+### Q: 脚本运行失败怎么办？
+A: 
+1. 查看 Actions 运行日志
+2. 检查是否配置了代理
+3. 确认账号密码是否正确
+4. 查看是否有错误截图（`page_error.png`）
+
+## 📜 更新日志
+
+- **2026-08-07**: 添加代理支持，绕过 WAF 验证
+- **2026-08-07**: 改为账号密码登录模式
+- **2026-08-06**: 初始版本
+
+## 📄 许可证
 
 MIT License
