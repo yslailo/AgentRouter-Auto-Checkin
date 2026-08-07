@@ -25,13 +25,6 @@
 |------|-------|------|
 | `USERNAME` | 你的邮箱 | AgentRouter 登录邮箱 |
 | `PASSWORD` | 你的密码 | AgentRouter 登录密码 |
-
-#### 代理配置（推荐，用于绕过 WAF）：
-
-**✨ 推荐方式：使用单个代理节点（一个 Secret 搞定）**
-
-| Name | Value | 说明 |
-|------|-------|------|
 | `NODE_LINK` | 代理节点链接 | 支持 vmess:// / vless:// / trojan:// / hysteria2:// / socks5:// |
 
 **示例**：
@@ -48,12 +41,6 @@ socks5://user:pass@host:port
 - 解析节点配置并生成 sing-box 配置
 - 启动本地 SOCKS5 代理（`socks5://127.0.0.1:1080`）
 - Playwright 通过本地代理访问 AgentRouter
-
-**优点**：
-- ✅ 只需配置一个 Secret
-- ✅ 支持多种协议（VMess/VLESS/Trojan/Hysteria2/SOCKS5）
-- ✅ 自动解析节点参数
-- ✅ 配置简单，开箱即用
 
 ---
 
