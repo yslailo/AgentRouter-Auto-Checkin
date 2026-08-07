@@ -320,7 +320,7 @@ def run_checkin():
     all_cookies["user_id"] = USER_ID
 
     for name, value in all_cookies.items():
-        session.cookies.set(name, value, domain="anyrouter.top", path="/")
+        session.cookies.set(name, value, domain="agentrouter.org", path="/")
 
     log("INFO", f"已设置 {len(all_cookies)} 个 Cookie: {list(all_cookies.keys())}")
 
