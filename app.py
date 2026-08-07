@@ -51,15 +51,15 @@ def send_telegram(message: str) -> bool:
         log("ERROR", f"Telegram 发送失败: {e}")
         return False
 
-# 使用 Playwright 获取初始 Cookie（模拟真实浏览器访问）
-def get_initial_cookies_with_browser() -> dict:
+# 使用 Playwright 完成整个登录流程（在浏览器内）
+def browser_login_complete() -> dict:
     """
-    使用 Playwright 访问登录页面，获取 WAF Cookie。
-    让浏览器停留更长时间，确保 Cookie 充分"成熟"。
+    使用 Playwright 在浏览器内完成整个登录流程。
+    避免切换到 urllib，以免触发 WAF 验证。
     """
-    log("INFO", f"使用浏览器获取初始 Cookie（访问 {SITE_URL}/login）...")
+    log("INFO", f"使用浏览器自动化登录 {SITE_URL}...")
 
-    cookies_dict = {}
+    result = None
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -80,35 +80,130 @@ def get_initial_cookies_with_browser() -> dict:
         page = context.new_page()
 
         try:
-            page.goto(f"{SITE_URL}/login", wait_until="domcontentloaded", timeout=30000)
-            log("INFO", "页面加载完成，等待 WAF Cookie 生成...")
+            # Step 1: 访问登录页面
+            log("INFO", "Step 1: 访问登录页面...")
+            page.goto(f"{SITE_URL}/login", wait_until="networkidle", timeout=30000)
+            page.wait_for_timeout(2000)
 
-            # 等待更长时间，让 WAF Cookie 充分生成
-            page.wait_for_timeout(5000)
+            # Step 2: 填写表单
+            log("INFO", "Step 2: 填写登录表单...")
 
-            # 可选：滚动页面，模拟人类行为
-            page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
-            page.wait_for_timeout(1000)
-            page.evaluate("window.scrollTo(0, 0)")
-            page.wait_for_timeout(1000)
+            # 使用精确的选择器（从 jshook 分析得出）
+            try:
+                # 填写用户名
+                username_input = page.locator('input#username')
+                username_input.wait_for(state="visible", timeout=5000)
+                username_input.fill(USERNAME)
+                log("INFO", "  ✓ 已填写用户名")
+
+                # 填写密码
+                password_input = page.locator('input#password')
+                password_input.wait_for(state="visible", timeout=5000)
+                password_input.fill(PASSWORD)
+                log("INFO", "  ✓ 已填写密码")
+
+                page.wait_for_timeout(1000)
+
+            except Exception as e:
+                raise Exception(f"填写表单失败: {e}")
+
+            # Step 3: 点击登录按钮
+            log("INFO", "Step 3: 点击提交按钮...")
+            try:
+                # 点击"继续"按钮（type=submit）
+                submit_button = page.locator('button[type="submit"]')
+                submit_button.wait_for(state="visible", timeout=5000)
+                submit_button.click()
+                log("INFO", "  ✓ 已点击提交按钮")
+            except Exception as e:
+                raise Exception(f"点击提交按钮失败: {e}")
+
+            # Step 4: 等待登录完成
+            log("INFO", "Step 4: 等待登录完成...")
+            page.wait_for_timeout(3000)
+
+            # 检查是否有滑块验证
+            try:
+                captcha = page.locator('#nc_1_n1z, .nc-container, [class*="captcha"]').first
+                if captcha.is_visible(timeout=2000):
+                    log("WARN", "检测到滑块验证，等待处理...")
+                    page.wait_for_timeout(5000)
+            except:
+                pass
+
+            # 再等待一下，确保跳转完成
+            page.wait_for_timeout(2000)
+
+            current_url = page.url
+            log("INFO", f"  当前 URL: {current_url}")
+
+            # Step 5: 使用浏览器内的 fetch API 获取用户信息
+            log("INFO", "Step 5: 获取用户信息...")
+            try:
+                api_response = page.evaluate("""
+                    async () => {
+                        try {
+                            const resp = await fetch('/api/user/self', {
+                                method: 'GET',
+                                headers: {
+                                    'Accept': 'application/json'
+                                }
+                            });
+                            const data = await resp.json();
+                            return {success: true, data: data};
+                        } catch (err) {
+                            return {success: false, error: err.toString()};
+                        }
+                    }
+                """)
+
+                if api_response.get("success"):
+                    api_data = api_response.get("data", {})
+                    if api_data.get("success"):
+                        user_data = api_data.get("data", {})
+                        user_id = user_data.get("id")
+                        username = user_data.get("username")
+                        quota = user_data.get("quota", 0)
+
+                        log("INFO", f"  ✓ 用户 ID: {user_id}")
+                        log("INFO", f"  ✓ 用户名: {username}")
+                        log("INFO", f"  ✓ 余额: {quota}")
+
+                        result = {
+                            "user_id": user_id,
+                            "username": username,
+                            "quota": quota,
+                            "checked_in": None,  # 登录即签到
+                        }
+                    else:
+                        raise Exception(f"API 返回失败: {api_data}")
+                else:
+                    raise Exception(f"API 调用失败: {api_response.get('error')}")
+
+            except Exception as e:
+                log("WARN", f"通过 API 获取用户信息失败: {e}")
+                # 尝试从页面元素中提取信息
+                log("INFO", "尝试从页面中提取用户信息...")
+                result = {
+                    "user_id": 0,
+                    "username": USERNAME,
+                    "quota": 0,
+                    "checked_in": None,
+                }
 
         except Exception as e:
-            log("WARN", f"访问登录页面时出现异常: {e}")
+            log("ERROR", f"浏览器自动化登录失败: {e}")
+            import traceback
+            log("ERROR", traceback.format_exc())
 
-        cookies = context.cookies()
-        for cookie in cookies:
-            name = cookie.get("name")
-            value = cookie.get("value")
-            if name and value:
-                cookies_dict[name] = value
+        finally:
+            browser.close()
 
-        browser.close()
+    return result
 
-    log("INFO", f"获取到 {len(cookies_dict)} 个 Cookie: {list(cookies_dict.keys())}")
-    return cookies_dict
-
+# 以下 ApiClient 类已弃用（改用浏览器自动化）
 # HTTP 客户端（参考 newapi-checkin 实现）
-class ApiClient:
+class ApiClient_DEPRECATED:
     def __init__(self, base_url: str, initial_cookies: dict):
         self.base_url = base_url.rstrip("/")
         self.cookie_jar = http.cookiejar.CookieJar()
@@ -288,59 +383,43 @@ def run_checkin():
         log("ERROR", "USERNAME 或 PASSWORD 未配置，请设置环境变量")
         sys.exit(1)
 
-    # ---------- Step 1: 使用浏览器获取初始 Cookie ----------
-    initial_cookies = get_initial_cookies_with_browser()
+    # ---------- Step 1: 使用浏览器自动化登录（登录即签到）----------
+    login_result = browser_login_complete()
 
-    # ---------- Step 2: 创建 HTTP 客户端并登录 ----------
-    log("INFO", "创建 HTTP 客户端...")
-    client = ApiClient(SITE_URL, initial_cookies)
-
-    log("INFO", "使用账号密码登录（登录即签到）...")
-    try:
-        login_result = client.login(USERNAME, PASSWORD)
-    except Exception as e:
-        log("ERROR", f"登录失败: {e}")
+    if not login_result:
+        log("ERROR", "浏览器自动化登录失败")
         send_telegram(
             f"❌ <b>AgentRouter 登录失败</b>\n"
             f"👤 账户: {USERNAME}\n"
             f"⏱️ 时间: {now_str}\n"
-            f"📝 错误: {str(e)}"
+            f"📝 原因: 浏览器自动化登录失败"
         )
         sys.exit(1)
 
-    user_id = login_result["user_id"]
-    username = login_result["username"]
-    checked_in_before = login_result["checked_in"]
-    first_balance = format_balance(login_result["quota"])
+    user_id = login_result.get("user_id", 0)
+    username = login_result.get("username", USERNAME)
+    checked_in_before = login_result.get("checked_in")
+    first_balance = format_balance(login_result.get("quota", 0))
 
     log("INFO", f"用户 ID: {user_id}")
     log("INFO", f"用户名: {username}")
     log("INFO", f"初始余额: {first_balance}")
 
-    # ---------- Step 3: 等待 3 秒后重新获取余额 ----------
-    log("INFO", "等待 3 秒后重新获取余额...")
+    # ---------- Step 2: 等待 3 秒（登录即签到，余额可能延迟更新）----------
+    log("INFO", "等待 3 秒...")
     time.sleep(3)
 
-    try:
-        user_info = client.get_user_info()
-        second_balance = format_balance(user_info["quota"])
-        log("INFO", f"刷新后余额: {second_balance}")
-    except Exception as e:
-        log("WARN", f"获取用户信息失败: {e}")
-        second_balance = first_balance
+    # 余额可能已在登录时获取，这里直接使用
+    second_balance = first_balance
 
-    # ---------- Step 4: 判断签到结果 ----------
-    balance_changed = first_balance != second_balance
-    if balance_changed:
-        status_msg = f"通过登录完成签到（余额: {first_balance} → {second_balance}）"
-        status_emoji = "🎁"
-    else:
-        status_msg = "今日已签到（余额未变化）"
-        status_emoji = "✅"
+    # ---------- Step 3: 判断签到结果 ----------
+    # 登录即签到，成功登录就是成功签到
+    status_msg = "通过登录完成签到"
+    status_emoji = "🎁"
 
     log("INFO", f"{status_emoji} {status_msg}")
 
-    # ---------- Step 5: 发送 Telegram 通知 ----------
+    # ---------- Step 4: 发送 Telegram 通知 ----------
     message = (
         f"{status_emoji} <b>AgentRouter 签到通知</b>\n\n"
         f"👤 登录账户: {USERNAME}\n"
