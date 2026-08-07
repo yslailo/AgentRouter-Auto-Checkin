@@ -17,7 +17,7 @@ SESSION      = os.getenv("SESSION") or ""  # session必填,登录后F12或右键
 TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN") or ""  # Telegram bot token,不需要通知可以留空
 TG_CHAT_ID   = os.getenv("TG_CHAT_ID") or ""    # Telegram chat id
 
-SITE_URL = "https://anyrouter.top"
+SITE_URL = "https://agentrouter.org"
 SESSION_TTL_DAYS = 30  # Session 有效期 30 天，剩余 < 3 天则更新
 SESSION_THRESHOLD_DAYS = 3
 QUOTA_PER_DOLLAR = 500000 
