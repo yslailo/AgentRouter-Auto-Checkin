@@ -32,16 +32,17 @@ jobs:
           pip install requests playwright pynacl
           playwright install --with-deps chromium
 
-      # ---------- 设置代理（如果配置了 PROXY_SUBSCRIPTION_URL）----------
-      - name: Setup Proxy via Mihomo
-        if: ${{ secrets.PROXY_SUBSCRIPTION_URL != '' }}
+      # ---------- 设置代理（如果配置了 NODE_LINK）----------
+      - name: Setup Proxy
+        if: ${{ secrets.NODE_LINK != '' }}
         env:
-          PROXY_SUBSCRIPTION_URL: ${{ secrets.PROXY_SUBSCRIPTION_URL }}
-          PROXY_TEST_URL: https://agentrouter.org
-          PROXY_REQUIRED: "true"
+          NODE_LINK: ${{ secrets.NODE_LINK }}
         run: |
           chmod +x setup-proxy.sh
-          ./setup-proxy.sh
+          if ! bash setup-proxy.sh; then
+            echo "❌ 代理设置失败"
+            exit 1
+          fi
 
       # ---------- 运行登录签到脚本 ----------
       - name: Run check-in script

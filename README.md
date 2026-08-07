@@ -28,23 +28,32 @@
 
 #### 代理配置（推荐，用于绕过 WAF）：
 
-**✨ 推荐方式：使用订阅链接（一个 Secret 搞定）**
+**✨ 推荐方式：使用单个代理节点（一个 Secret 搞定）**
 
 | Name | Value | 说明 |
 |------|-------|------|
-| `PROXY_SUBSCRIPTION_URL` | 你的订阅链接 | 机场订阅链接，支持 V2Ray/Clash 格式 |
+| `NODE_LINK` | 代理节点链接 | 支持 vmess:// / vless:// / trojan:// / hysteria2:// / socks5:// |
+
+**示例**：
+```
+vmess://ew0KICAidiI6ICIyIiwNCiAgInBzIjogIuWPsOa5vummmue4rzAxIiwNCi...
+vless://uuid@host:port?type=ws&security=tls&sni=example.com
+trojan://password@host:port?type=ws&sni=example.com
+hysteria2://auth@host:port?sni=example.com
+socks5://user:pass@host:port
+```
 
 **工作原理**：
-- 脚本自动下载 [mihomo](https://github.com/MetaCubeX/mihomo)（Clash Meta 内核）
-- 自动拉取订阅并选择最快的可用节点
-- 启动本地 HTTP 代理（`http://127.0.0.1:7890`）
+- 脚本自动下载 [sing-box](https://github.com/SagerNet/sing-box)
+- 解析节点配置并生成 sing-box 配置
+- 启动本地 SOCKS5 代理（`socks5://127.0.0.1:1080`）
 - Playwright 通过本地代理访问 AgentRouter
 
 **优点**：
 - ✅ 只需配置一个 Secret
-- ✅ 自动选择最快节点
-- ✅ 支持多种协议（VMess/Trojan/SS/SSR/VLESS）
-- ✅ 节点失效自动切换
+- ✅ 支持多种协议（VMess/VLESS/Trojan/Hysteria2/SOCKS5）
+- ✅ 自动解析节点参数
+- ✅ 配置简单，开箱即用
 
 ---
 
@@ -118,17 +127,17 @@ A: GitHub Actions 的 IP 会被 AgentRouter 的 WAF 识别为机器人，触发�
 
 ### Q: 代理服务推荐？
 A: 
-- **✨ 推荐**：使用机场订阅（配置最简单）
+- **✨ 推荐**：使用单个代理节点（vmess/vless/trojan 等）
+- **机场订阅**：如果有订阅链接，也可以直接复制一个节点链接
 - **Smartproxy**：性价比高，适合个人使用
 - **BrightData**：质量最好，但价格较贵
-- **IPRoyal**：价格便宜，中等质量
 
-### Q: 如何获取订阅链接？
+### Q: 如何获取代理节点链接？
 A:
-1. 从你的机场（VPN 服务商）获取订阅链接
-2. 通常在"订阅中心"或"客户端配置"页面
-3. 支持 V2Ray/Clash 格式的订阅链接
-4. 链接格式通常是 `https://xxx.com/api/v1/client/subscribe?token=...`
+1. 从你的机场（VPN 服务商）获取节点链接
+2. 通常在客户端中可以复制单个节点的分享链接
+3. 支持的格式：`vmess://`, `vless://`, `trojan://`, `hysteria2://`, `socks5://`
+4. 也可以从订阅链接中选择一个节点复制
 
 ### Q: 不想用代理怎么办？
 A: 可以改用 Session Cookie 模式，但需要每 30 天手动更新一次 Cookie。
