@@ -41,19 +41,7 @@ socks5://user:pass@host:port
 - 解析节点配置并生成 sing-box 配置
 - 启动本地 SOCKS5 代理（`socks5://127.0.0.1:1080`）
 - Playwright 通过本地代理访问 AgentRouter
-
 ---
-
-**方式 2：使用 HTTP/SOCKS5 代理**
-
-如果你有现成的 HTTP/SOCKS5 代理：
-
-| Name | Value | 示例 |
-|------|-------|------|
-| `PROXY_SERVER` | 代理服务器地址 | `http://proxy.example.com:8080` 或 `socks5://proxy.example.com:1080` |
-| `PROXY_USERNAME` | 代理用户名 | `your-proxy-username`（如果需要认证） |
-| `PROXY_PASSWORD` | 代理密码 | `your-proxy-password`（如果需要认证） |
-
 #### Telegram 通知（可选）：
 
 | Name | Value | 说明 |
@@ -71,24 +59,6 @@ socks5://user:pass@host:port
 
 前往 **Actions** → 选择 **Ayrouter Daily Check-in** → 点击 **Run workflow**
 
-## 🔧 本地测试
-
-```bash
-# 安装依赖
-pip install requests playwright
-playwright install chromium
-
-# 设置环境变量
-export USERNAME="your-email@example.com"
-export PASSWORD="your-password"
-export PROXY_SERVER="http://your-proxy:port"  # 可选
-export PROXY_USERNAME="proxy-user"             # 可选
-export PROXY_PASSWORD="proxy-pass"             # 可选
-
-# 运行脚本
-python app.py
-```
-
 ## 📋 工作原理
 
 1. **登录即签到**：AgentRouter 的签到机制是"登录即完成签到"
@@ -105,29 +75,8 @@ AgentRouter 使用了阿里云 WAF，在以下情况会触发滑块验证：
 
 **解决方案**：
 1. ✅ **推荐**：配置住宅代理 IP（稳定可靠）
-2. ⚠️ 备选：使用 Session Cookie 模式（需定期手动更新）
 
 ## 🛠️ 常见问题
-
-### Q: 为什么需要代理？
-A: GitHub Actions 的 IP 会被 AgentRouter 的 WAF 识别为机器人，触发滑块验证。使用住宅代理可以绕过这个检测。
-
-### Q: 代理服务推荐？
-A: 
-- **✨ 推荐**：使用单个代理节点（vmess/vless/trojan 等）
-- **机场订阅**：如果有订阅链接，也可以直接复制一个节点链接
-- **Smartproxy**：性价比高，适合个人使用
-- **BrightData**：质量最好，但价格较贵
-
-### Q: 如何获取代理节点链接？
-A:
-1. 从你的机场（VPN 服务商）获取节点链接
-2. 通常在客户端中可以复制单个节点的分享链接
-3. 支持的格式：`vmess://`, `vless://`, `trojan://`, `hysteria2://`, `socks5://`
-4. 也可以从订阅链接中选择一个节点复制
-
-### Q: 不想用代理怎么办？
-A: 可以改用 Session Cookie 模式，但需要每 30 天手动更新一次 Cookie。
 
 ### Q: 如何获取 Telegram Chat ID？
 A: 
