@@ -28,45 +28,35 @@
 
 #### 代理配置（推荐，用于绕过 WAF）：
 
-**方式 1：使用 HTTP/SOCKS5 代理**
+**✨ 推荐方式：使用订阅链接（一个 Secret 搞定）**
+
+| Name | Value | 说明 |
+|------|-------|------|
+| `PROXY_SUBSCRIPTION_URL` | 你的订阅链接 | 机场订阅链接，支持 V2Ray/Clash 格式 |
+
+**工作原理**：
+- 脚本自动下载 [mihomo](https://github.com/MetaCubeX/mihomo)（Clash Meta 内核）
+- 自动拉取订阅并选择最快的可用节点
+- 启动本地 HTTP 代理（`http://127.0.0.1:7890`）
+- Playwright 通过本地代理访问 AgentRouter
+
+**优点**：
+- ✅ 只需配置一个 Secret
+- ✅ 自动选择最快节点
+- ✅ 支持多种协议（VMess/Trojan/SS/SSR/VLESS）
+- ✅ 节点失效自动切换
+
+---
+
+**方式 2：使用 HTTP/SOCKS5 代理**
+
+如果你有现成的 HTTP/SOCKS5 代理：
 
 | Name | Value | 示例 |
 |------|-------|------|
 | `PROXY_SERVER` | 代理服务器地址 | `http://proxy.example.com:8080` 或 `socks5://proxy.example.com:1080` |
 | `PROXY_USERNAME` | 代理用户名 | `your-proxy-username`（如果需要认证） |
 | `PROXY_PASSWORD` | 代理密码 | `your-proxy-password`（如果需要认证） |
-
-**方式 2：使用 VMess 节点**
-
-如果你有 VMess 节点（如 `vmess://...`），需要配置以下参数：
-
-| Name | Value | 说明 | 示例 |
-|------|-------|------|------|
-| `VMESS_CONFIG` | 任意非空值 | 启用 VMess 模式 | `enabled` |
-| `VMESS_SERVER` | 服务器地址 | VMess 节点的 address | `162.159.40.181` |
-| `VMESS_PORT` | 端口 | VMess 节点的 port | `2096` |
-| `VMESS_UUID` | UUID | VMess 节点的 id | `f77d01d6-3b3d-465e-bd85-c267e81006f4` |
-| `VMESS_PATH` | WebSocket 路径 | VMess 节点的 path | `/f77d01d6-3b3d-465e-bd85-c267e81006f4-vm` |
-| `VMESS_HOST` | 主机名 | VMess 节点的 host | `populations-avi-stroke-urw.trycloudflare.com` |
-| `VMESS_SNI` | SNI | VMess 节点的 sni | `populations-avi-stroke-urw.trycloudflare.com` |
-
-**如何从 VMess 链接中提取参数**：
-
-```bash
-# 将你的 vmess:// 链接复制，去掉 "vmess://" 前缀
-# 然后用 base64 解码：
-echo "你的base64字符串" | base64 -d
-
-# 会得到类似这样的 JSON：
-{
-  "add": "162.159.40.181",      # → VMESS_SERVER
-  "port": "2096",                # → VMESS_PORT
-  "id": "f77d01d6-...",          # → VMESS_UUID
-  "path": "/f77d01d6-.../vm",    # → VMESS_PATH
-  "host": "populations-...",     # → VMESS_HOST
-  "sni": "populations-..."       # → VMESS_SNI
-}
-```
 
 #### Telegram 通知（可选）：
 
@@ -128,9 +118,17 @@ A: GitHub Actions 的 IP 会被 AgentRouter 的 WAF 识别为机器人，触发�
 
 ### Q: 代理服务推荐？
 A: 
+- **✨ 推荐**：使用机场订阅（配置最简单）
 - **Smartproxy**：性价比高，适合个人使用
 - **BrightData**：质量最好，但价格较贵
 - **IPRoyal**：价格便宜，中等质量
+
+### Q: 如何获取订阅链接？
+A:
+1. 从你的机场（VPN 服务商）获取订阅链接
+2. 通常在"订阅中心"或"客户端配置"页面
+3. 支持 V2Ray/Clash 格式的订阅链接
+4. 链接格式通常是 `https://xxx.com/api/v1/client/subscribe?token=...`
 
 ### Q: 不想用代理怎么办？
 A: 可以改用 Session Cookie 模式，但需要每 30 天手动更新一次 Cookie。
