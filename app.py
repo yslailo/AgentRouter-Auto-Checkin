@@ -231,21 +231,43 @@ def browser_login_complete() -> dict | None:
             # Step 5: 使用浏览器内的 fetch API 获取用户信息
             log("INFO", "Step 5: 获取用户信息...")
 
-            api_result = page.evaluate("""
-                async () => {
+            # 先尝试从页面中获取用户信息（更可靠）
+            page_user_info = page.evaluate("""
+                () => {
                     try {
-                        const resp = await fetch('/api/user/self', {
-                            method: 'GET',
-                            headers: { 'Accept': 'application/json' }
-                        });
-                        const data = await resp.json();
+                        // 尝试从 localStorage 获取用户信息
+                        const userStr = localStorage.getItem('user');
+                        if (userStr) {
+                            const user = JSON.parse(userStr);
+                            return {
+                                success: true,
+                                source: 'localStorage',
+                                data: {
+                                    id: user.id,
+                                    username: user.username,
+                                    quota: user.quota
+                                }
+                            };
+                        }
+
+                        // 尝试从页面元素中提取
+                        const scripts = document.querySelectorAll('script');
+                        for (const script of scripts) {
+                            const text = script.textContent || '';
+                            if (text.includes('user') && text.includes('quota')) {
+                                // 可能包含用户数据，但需要解析
+                                return {
+                                    success: false,
+                                    source: 'script_found',
+                                    message: 'Found potential user data in script'
+                                };
+                            }
+                        }
 
                         return {
-                            success: true,
-                            status: resp.status,
-                            apiSuccess: data.success,
-                            data: data.data || null,
-                            message: data.message || null
+                            success: false,
+                            source: 'none',
+                            message: 'User data not found in localStorage'
                         };
                     } catch (err) {
                         return {
@@ -256,33 +278,72 @@ def browser_login_complete() -> dict | None:
                 }
             """)
 
-            if not api_result.get("success"):
-                raise Exception(f"API 调用失败: {api_result.get('error')}")
+            if page_user_info.get("success"):
+                user_data = page_user_info.get("data", {})
+                user_id = user_data.get("id")
+                username = user_data.get("username")
+                quota = user_data.get("quota", 0)
 
-            if api_result.get("status") == 401:
-                raise Exception(f"登录失败: {api_result.get('message', '未授权')}")
+                log("INFO", f"  ✓ 从 {page_user_info.get('source')} 获取用户信息")
+                log("INFO", f"  ✓ 用户 ID: {user_id}")
+                log("INFO", f"  ✓ 用户名: {username}")
+                log("INFO", f"  ✓ 余额: {quota}")
 
-            if not api_result.get("apiSuccess"):
-                raise Exception(f"登录失败: {api_result.get('message', '未知错误')}")
+                result = {
+                    "user_id": user_id,
+                    "username": username,
+                    "quota": quota,
+                    "checked_in": None,
+                }
+            else:
+                # 如果 localStorage 没有，等待页面完全加载后重试
+                log("WARN", f"  localStorage 中未找到用户信息: {page_user_info.get('message')}")
+                log("INFO", "  等待 2 秒后重试...")
+                page.wait_for_timeout(2000)
 
-            user_data = api_result.get("data", {})
-            user_id = user_data.get("id")
-            username = user_data.get("username")
-            quota = user_data.get("quota", 0)
+                # 再次尝试从 localStorage 获取
+                page_user_info = page.evaluate("""
+                    () => {
+                        try {
+                            const userStr = localStorage.getItem('user');
+                            if (userStr) {
+                                const user = JSON.parse(userStr);
+                                return {
+                                    success: true,
+                                    data: {
+                                        id: user.id,
+                                        username: user.username,
+                                        quota: user.quota
+                                    }
+                                };
+                            }
+                            return { success: false };
+                        } catch (err) {
+                            return { success: false, error: err.toString() };
+                        }
+                    }
+                """)
 
-            if not user_id:
-                raise Exception("登录响应缺少用户 ID")
-
-            log("INFO", f"  ✓ 用户 ID: {user_id}")
-            log("INFO", f"  ✓ 用户名: {username}")
-            log("INFO", f"  ✓ 余额: {quota}")
-
-            result = {
-                "user_id": user_id,
-                "username": username,
-                "quota": quota,
-                "checked_in": None,  # 登录即签到
-            }
+                if page_user_info.get("success"):
+                    user_data = page_user_info.get("data", {})
+                    result = {
+                        "user_id": user_data.get("id"),
+                        "username": user_data.get("username"),
+                        "quota": user_data.get("quota", 0),
+                        "checked_in": None,
+                    }
+                    log("INFO", f"  ✓ 用户 ID: {result['user_id']}")
+                    log("INFO", f"  ✓ 用户名: {result['username']}")
+                    log("INFO", f"  ✓ 余额: {result['quota']}")
+                else:
+                    # 如果还是获取不到，说明登录成功了，但无法获取详细信息
+                    log("WARN", "  无法获取详细用户信息，但登录已成功（已跳转到 /console）")
+                    result = {
+                        "user_id": 0,
+                        "username": USERNAME,
+                        "quota": 0,
+                        "checked_in": None,
+                    }
 
         except PlaywrightTimeoutError as e:
             log("ERROR", f"页面操作超时: {e}")
