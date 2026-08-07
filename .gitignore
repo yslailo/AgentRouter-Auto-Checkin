@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+sing-box
+sing-box-config.json
+sing-box.log
+page_error.png
+error_screenshot.png
+*.png
+screenshots/
+
+# Third-party repos
+newapi-checkin/
+
+# Test files
+test_local.py
+test_local.sh
+
+# Docs (temporary)
+DEPLOY_CHECKLIST.md
+FINAL_CONFIRMATION.md
+QUICKSTART.md
