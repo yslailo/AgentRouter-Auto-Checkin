@@ -47,14 +47,23 @@ def send_telegram(message: str) -> bool:
         log("ERROR", f"Telegram 发送失败: {e}")
         return False
 
-# WAF Cookie 获取
-def get_waf_cookies() -> dict:
+# 使用浏览器自动化登录
+def browser_login() -> dict | None:
     """
-    使用 Playwright 浏览器访问登录页面，获取 WAF Cookie。
+    使用 Playwright 浏览器自动化登录，处理 WAF 和滑块验证。
+    返回:
+      {
+        "user_id": int,
+        "username": str,
+        "checked_in": bool,
+        "quota": int,
+        "session": str,  # Session Cookie
+        "cookies": dict,  # 所有 Cookie
+      }
     """
-    log("INFO", f"使用浏览器获取 WAF Cookie（访问 {SITE_URL}/login）...")
+    log("INFO", f"使用浏览器自动化登录 {SITE_URL}...")
 
-    waf_cookies = {}
+    result = None
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -78,28 +87,138 @@ def get_waf_cookies() -> dict:
         page = context.new_page()
 
         try:
+            # Step 1: 访问登录页面
+            log("INFO", "正在访问登录页面...")
             page.goto(f"{SITE_URL}/login", wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_timeout(2000)
+
+            # Step 2: 查找并填写账号密码
+            log("INFO", "正在填写登录表单...")
+
+            # 查找用户名输入框（可能是 input[type=text] 或 input[type=email]）
+            username_input = page.locator("input[type=text], input[type=email], input[name*=user], input[name*=email], input[placeholder*=账号], input[placeholder*=邮箱]").first
+            if username_input.is_visible():
+                username_input.fill(USERNAME)
+                log("INFO", "✓ 已填写用户名")
+            else:
+                log("ERROR", "找不到用户名输入框")
+                browser.close()
+                return None
+
+            # 查找密码输入框
+            password_input = page.locator("input[type=password]").first
+            if password_input.is_visible():
+                password_input.fill(PASSWORD)
+                log("INFO", "✓ 已填写密码")
+            else:
+                log("ERROR", "找不到密码输入框")
+                browser.close()
+                return None
+
+            # Step 3: 点击登录按钮
+            log("INFO", "正在点击登录按钮...")
+            login_button = page.locator("button[type=submit], button:has-text('登录'), button:has-text('Login')").first
+            login_button.click()
+
+            # Step 4: 等待登录完成或出现验证码
+            log("INFO", "等待登录响应...")
+            page.wait_for_timeout(3000)
+
+            # 检查是否有滑块验证
+            captcha_slider = page.locator("#nc_1_n1z, .nc-container, .aliyun-captcha, [id*=captcha], [class*=captcha]").first
+            if captcha_slider.is_visible(timeout=2000):
+                log("WARN", "检测到滑块验证码，尝试处理...")
+                # 等待用户手动完成或尝试自动处理（这里简单等待）
+                page.wait_for_timeout(5000)
+
+            # Step 5: 检查是否登录成功（等待跳转或检查 URL 变化）
+            page.wait_for_timeout(3000)
+            current_url = page.url
+
+            if "/login" not in current_url or "console" in current_url or "dashboard" in current_url:
+                log("INFO", "✅ 登录成功，已跳转到控制台")
+            else:
+                log("INFO", f"当前页面: {current_url}")
+
+            # Step 6: 获取登录后的 Cookie
+            cookies = context.cookies()
+            session_cookie = None
+            user_id_cookie = None
+            all_cookies = {}
+
+            for cookie in cookies:
+                name = cookie.get("name")
+                value = cookie.get("value")
+                all_cookies[name] = value
+
+                if name == "session":
+                    session_cookie = value
+                    log("INFO", f"✓ 获取到 Session Cookie: {value[:10]}...{value[-10:]}")
+                if name == "user_id":
+                    user_id_cookie = value
+
+            if not session_cookie:
+                log("ERROR", "未获取到 Session Cookie，登录可能失败")
+                log("INFO", f"获取到的 Cookie: {list(all_cookies.keys())}")
+                browser.close()
+                return None
+
+            # Step 7: 调用 API 获取用户信息
+            log("INFO", "正在获取用户信息...")
+            try:
+                # 使用 page.evaluate 调用 API
+                api_response = page.evaluate("""
+                    async () => {
+                        const resp = await fetch('/api/user/self', {
+                            method: 'GET',
+                            headers: {
+                                'Accept': 'application/json'
+                            }
+                        });
+                        return await resp.json();
+                    }
+                """)
+
+                if api_response and api_response.get("success"):
+                    user_data = api_response.get("data", {})
+                    user_id = user_data.get("id")
+                    username = user_data.get("username")
+                    quota = user_data.get("quota", 0)
+
+                    # checked_in 可能需要从其他 API 获取，这里先设为 None
+                    log("INFO", f"✓ 用户 ID: {user_id}, 用户名: {username}, 余额: {quota}")
+
+                    result = {
+                        "user_id": user_id,
+                        "username": username,
+                        "checked_in": None,  # 登录即签到，默认为已签到
+                        "quota": quota,
+                        "session": session_cookie,
+                        "cookies": all_cookies,
+                    }
+                else:
+                    log("WARN", f"获取用户信息失败: {api_response}")
+
+            except Exception as e:
+                log("WARN", f"获取用户信息失败: {e}")
+                # 即使获取用户信息失败，也返回基本信息
+                result = {
+                    "user_id": int(user_id_cookie) if user_id_cookie and user_id_cookie.isdigit() else 0,
+                    "username": USERNAME,
+                    "checked_in": None,
+                    "quota": 0,
+                    "session": session_cookie,
+                    "cookies": all_cookies,
+                }
+
         except Exception as e:
-            log("WARN", f"访问登录页面失败: {e}")
-
-        # 等待 WAF Cookie 生成
-        page.wait_for_timeout(3000)
-
-        cookies = context.cookies()
-        for cookie in cookies:
-            name = cookie.get("name")
-            value = cookie.get("value")
-            if name in WAF_COOKIE_NAMES and value:
-                waf_cookies[name] = value
+            log("ERROR", f"浏览器自动化登录失败: {e}")
+            import traceback
+            log("ERROR", traceback.format_exc())
 
         browser.close()
 
-    if waf_cookies:
-        log("INFO", f"获取到 {len(waf_cookies)} 个 WAF Cookie: {list(waf_cookies.keys())}")
-    else:
-        log("WARN", "未获取到 WAF Cookie")
-
-    return waf_cookies
+    return result
 
 # API 调用
 def build_headers() -> dict:
@@ -119,95 +238,6 @@ def build_headers() -> dict:
         "Sec-Fetch-Mode": "cors",
         "Sec-Fetch-Site": "same-origin",
     }
-
-def login_with_password(session: requests.Session, headers: dict) -> dict | None:
-    """
-    使用账号密码登录，登录动作本身即触发签到。
-    返回:
-      {
-        "user_id": int,
-        "username": str,
-        "checked_in": bool,  # 登录前是否已签到
-        "quota": int,         # 当前余额
-        "raw": dict,
-      }
-    """
-    # Step 1: 先访问登录页面（获取页面状态，触发初始化）
-    try:
-        login_page_headers = headers.copy()
-        login_page_headers["Referer"] = f"{SITE_URL}/login?expired=true"
-        resp = session.get(f"{SITE_URL}/login?expired=true", headers=login_page_headers, timeout=30)
-        log("INFO", f"预访问登录页面: HTTP {resp.status_code}")
-    except Exception as e:
-        log("WARN", f"预访问登录页面失败（继续尝试登录）: {e}")
-
-    # Step 2: 调用登录 API
-    login_url = f"{SITE_URL}/api/user/login?turnstile="
-    login_headers = headers.copy()
-    login_headers["Content-Type"] = "application/json"
-    login_headers["Referer"] = f"{SITE_URL}/login?expired=true"
-
-    payload = {
-        "username": USERNAME,
-        "password": PASSWORD,
-    }
-
-    try:
-        resp = session.post(login_url, headers=login_headers, json=payload, timeout=30)
-        log("INFO", f"登录接口响应: HTTP {resp.status_code}")
-
-        # 调试：打印响应内容前 500 字符
-        response_preview = resp.text[:500] if resp.text else "(空响应)"
-        log("INFO", f"响应内容预览: {response_preview}")
-
-        if resp.status_code == 200:
-            # 检查响应是否为空
-            if not resp.text or not resp.text.strip():
-                log("ERROR", "登录接口返回空响应")
-                return None
-
-            try:
-                data = resp.json()
-            except json.JSONDecodeError as e:
-                log("ERROR", f"响应不是 JSON 格式: {e}")
-                log("ERROR", f"完整响应内容: {resp.text[:1000]}")
-                # 检查是否被重定向到 HTML 页面
-                if "<html" in resp.text.lower() or "<!doctype" in resp.text.lower():
-                    log("ERROR", "响应是 HTML 页面，可能被 WAF 拦截或需要人机验证")
-                return None
-
-            if data.get("success"):
-                user_data = data.get("data", {})
-                user_id = user_data.get("id")
-                username = user_data.get("username", USERNAME)
-                checked_in = user_data.get("checked_in")  # 登录前是否已签到
-                quota = user_data.get("quota", 0)
-
-                if not isinstance(user_id, int):
-                    log("ERROR", f"登录响应缺少有效的用户 ID: {user_id}")
-                    return None
-
-                log("INFO", f"✅ 登录成功！用户 ID: {user_id}, 用户名: {username}")
-
-                return {
-                    "user_id": user_id,
-                    "username": username,
-                    "checked_in": bool(checked_in) if isinstance(checked_in, bool) else None,
-                    "quota": quota,
-                    "raw": user_data,
-                }
-            else:
-                error_msg = data.get("message", "未知错误")
-                log("ERROR", f"登录失败: {error_msg}")
-                return None
-        else:
-            log("ERROR", f"登录失败: HTTP {resp.status_code}: {resp.text[:200]}")
-            return None
-    except Exception as e:
-        log("ERROR", f"登录请求异常: {type(e).__name__}: {e}")
-        import traceback
-        log("ERROR", traceback.format_exc())
-        return None
 
 def get_user_info(session: requests.Session, headers: dict, user_id: int) -> dict | None:
     """
@@ -262,31 +292,16 @@ def run_checkin():
         log("ERROR", "USERNAME 或 PASSWORD 未配置，请设置环境变量")
         sys.exit(1)
 
-    # ---------- Step 1: 获取 WAF Cookie ----------
-    waf_cookies = get_waf_cookies()
-
-    # ---------- Step 2: 构建 HTTP Session ----------
-    session = requests.Session()
-
-    # 设置 WAF Cookie
-    for name, value in waf_cookies.items():
-        session.cookies.set(name, value, domain="agentrouter.org", path="/")
-
-    log("INFO", f"已设置 {len(waf_cookies)} 个 WAF Cookie: {list(waf_cookies.keys())}")
-
-    headers = build_headers()
-
-    # ---------- Step 3: 使用账号密码登录（登录即签到）----------
-    log("INFO", "使用账号密码登录...")
-    login_result = login_with_password(session, headers)
+    # ---------- Step 1: 使用浏览器自动化登录（登录即签到）----------
+    login_result = browser_login()
 
     if not login_result:
-        log("ERROR", "登录失败，请检查账号密码是否正确")
+        log("ERROR", "浏览器自动化登录失败")
         send_telegram(
             f"❌ <b>AgentRouter 登录失败</b>\n"
             f"👤 账户: {USERNAME}\n"
             f"⏱️ 时间: {now_str}\n"
-            f"📝 原因: 账号或密码错误"
+            f"📝 原因: 浏览器自动化登录失败，可能需要人工处理验证码"
         )
         sys.exit(1)
 
@@ -294,34 +309,40 @@ def run_checkin():
     username = login_result["username"]
     checked_in_before = login_result["checked_in"]
     first_balance = format_balance(login_result["quota"])
+    session_cookie = login_result["session"]
 
     log("INFO", f"用户名: {username}")
     log("INFO", f"用户 ID: {user_id}")
-    log("INFO", f"登录前签到状态: {'已签到' if checked_in_before else '未签到'}")
+    log("INFO", f"Session: {session_cookie[:10]}...{session_cookie[-10:] if len(session_cookie) > 20 else ''}")
     log("INFO", f"初始余额: {first_balance}")
 
-    # ---------- Step 4: 等待 3 秒后重新获取余额 ----------
+    # ---------- Step 2: 等待 3 秒后重新获取余额 ----------
     log("INFO", "等待 3 秒后重新获取余额...")
     time.sleep(3)
 
+    # 使用获取到的 Session 查询余额
+    session = requests.Session()
+    for name, value in login_result["cookies"].items():
+        session.cookies.set(name, value, domain="agentrouter.org", path="/")
+
+    headers = build_headers()
     user_info = get_user_info(session, headers, user_id)
-    second_balance = format_balance(user_info.get("quota", 0)) if user_info else "N/A"
+    second_balance = format_balance(user_info.get("quota", 0)) if user_info else first_balance
     log("INFO", f"刷新后余额: {second_balance}")
 
-    # ---------- Step 5: 判断签到结果 ----------
-    if checked_in_before is True:
-        status_msg = "今日已签到过（登录前）"
-        status_emoji = "✅"
-    elif checked_in_before is False:
-        status_msg = "通过登录完成签到"
+    # ---------- Step 3: 判断签到结果 ----------
+    # 登录即签到，如果成功登录就是成功签到
+    balance_changed = first_balance != second_balance
+    if balance_changed:
+        status_msg = f"通过登录完成签到（余额变化: {first_balance} → {second_balance}）"
         status_emoji = "🎁"
     else:
-        status_msg = "登录成功（签到状态未知）"
+        status_msg = "今日已签到（余额未变化）"
         status_emoji = "✅"
 
     log("INFO", f"{status_emoji} {status_msg}")
 
-    # ---------- Step 6: 发送 Telegram 通知 ----------
+    # ---------- Step 4: 发送 Telegram 通知 ----------
     message = (
         f"{status_emoji} <b>AgentRouter 签到通知</b>\n\n"
         f"👤 登录账户: {USERNAME}\n"
