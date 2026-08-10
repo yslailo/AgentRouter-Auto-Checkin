@@ -228,46 +228,53 @@ def browser_login_complete() -> dict | None:
             current_url = page.url
             log("INFO", f"  当前 URL: {current_url}")
 
-            # Step 5: 使用浏览器内的 fetch API 获取用户信息
+            # Step 5: 使用登录后的浏览器会话调用用户信息接口
             log("INFO", "Step 5: 获取用户信息...")
 
-            # 先尝试从页面中获取用户信息（更可靠）
-            page_user_info = page.evaluate("""
-                () => {
+            api_result = page.evaluate("""
+                async () => {
                     try {
-                        // 尝试从 localStorage 获取用户信息
-                        const userStr = localStorage.getItem('user');
-                        if (userStr) {
-                            const user = JSON.parse(userStr);
+                        let userStr = null;
+                        for (let attempt = 0; attempt < 10; attempt++) {
+                            userStr = localStorage.getItem('user');
+                            if (userStr) break;
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                        }
+
+                        if (!userStr) {
+                            return { success: false, error: '登录后未找到用户 ID' };
+                        }
+
+                        const localUser = JSON.parse(userStr);
+                        if (!localUser.id) {
+                            return { success: false, error: '登录用户 ID 无效' };
+                        }
+
+                        const response = await fetch('/api/user/self', {
+                            method: 'GET',
+                            headers: {
+                                'Accept': 'application/json, text/plain, */*',
+                                'New-API-User': String(localUser.id)
+                            },
+                            credentials: 'include',
+                            cache: 'no-store'
+                        });
+
+                        let payload;
+                        try {
+                            payload = await response.json();
+                        } catch (err) {
                             return {
-                                success: true,
-                                source: 'localStorage',
-                                data: {
-                                    id: user.id,
-                                    username: user.username,
-                                    quota: user.quota
-                                }
+                                success: false,
+                                status: response.status,
+                                error: '用户信息接口未返回 JSON'
                             };
                         }
 
-                        // 尝试从页面元素中提取
-                        const scripts = document.querySelectorAll('script');
-                        for (const script of scripts) {
-                            const text = script.textContent || '';
-                            if (text.includes('user') && text.includes('quota')) {
-                                // 可能包含用户数据，但需要解析
-                                return {
-                                    success: false,
-                                    source: 'script_found',
-                                    message: 'Found potential user data in script'
-                                };
-                            }
-                        }
-
                         return {
-                            success: false,
-                            source: 'none',
-                            message: 'User data not found in localStorage'
+                            success: response.ok,
+                            status: response.status,
+                            payload
                         };
                     } catch (err) {
                         return {
@@ -278,72 +285,36 @@ def browser_login_complete() -> dict | None:
                 }
             """)
 
-            if page_user_info.get("success"):
-                user_data = page_user_info.get("data", {})
-                user_id = user_data.get("id")
-                username = user_data.get("username")
-                quota = user_data.get("quota", 0)
+            if not api_result.get("success"):
+                status = api_result.get("status")
+                error = api_result.get("error") or "请求失败"
+                if status:
+                    raise Exception(f"获取用户信息失败（HTTP {status}）: {error}")
+                raise Exception(f"获取用户信息失败: {error}")
 
-                log("INFO", f"  ✓ 从 {page_user_info.get('source')} 获取用户信息")
-                log("INFO", f"  ✓ 用户 ID: {user_id}")
-                log("INFO", f"  ✓ 用户名: {username}")
-                log("INFO", f"  ✓ 余额: {quota}")
+            payload = api_result.get("payload")
+            if not isinstance(payload, dict) or payload.get("success") is not True:
+                message = payload.get("message") if isinstance(payload, dict) else "响应格式错误"
+                raise Exception(f"获取用户信息失败: {message or '接口返回失败'}")
 
-                result = {
-                    "user_id": user_id,
-                    "username": username,
-                    "quota": quota,
-                    "checked_in": None,
-                }
-            else:
-                # 如果 localStorage 没有，等待页面完全加载后重试
-                log("WARN", f"  localStorage 中未找到用户信息: {page_user_info.get('message')}")
-                log("INFO", "  等待 2 秒后重试...")
-                page.wait_for_timeout(2000)
+            user_data = payload.get("data")
+            if not isinstance(user_data, dict):
+                raise Exception("获取用户信息失败: 响应中缺少 data")
 
-                # 再次尝试从 localStorage 获取
-                page_user_info = page.evaluate("""
-                    () => {
-                        try {
-                            const userStr = localStorage.getItem('user');
-                            if (userStr) {
-                                const user = JSON.parse(userStr);
-                                return {
-                                    success: true,
-                                    data: {
-                                        id: user.id,
-                                        username: user.username,
-                                        quota: user.quota
-                                    }
-                                };
-                            }
-                            return { success: false };
-                        } catch (err) {
-                            return { success: false, error: err.toString() };
-                        }
-                    }
-                """)
+            quota = user_data.get("quota")
+            if isinstance(quota, bool) or not isinstance(quota, (int, float)):
+                raise Exception("获取用户信息失败: data.quota 不是有效数字")
 
-                if page_user_info.get("success"):
-                    user_data = page_user_info.get("data", {})
-                    result = {
-                        "user_id": user_data.get("id"),
-                        "username": user_data.get("username"),
-                        "quota": user_data.get("quota", 0),
-                        "checked_in": None,
-                    }
-                    log("INFO", f"  ✓ 用户 ID: {result['user_id']}")
-                    log("INFO", f"  ✓ 用户名: {result['username']}")
-                    log("INFO", f"  ✓ 余额: {result['quota']}")
-                else:
-                    # 如果还是获取不到，说明登录成功了，但无法获取详细信息
-                    log("WARN", "  无法获取详细用户信息，但登录已成功（已跳转到 /console）")
-                    result = {
-                        "user_id": 0,
-                        "username": USERNAME,
-                        "quota": 0,
-                        "checked_in": None,
-                    }
+            result = {
+                "user_id": user_data.get("id", 0),
+                "username": user_data.get("username") or USERNAME,
+                "quota": quota,
+                "checked_in": None,
+            }
+            log("INFO", "  ✓ 已从 /api/user/self 获取用户信息")
+            log("INFO", f"  ✓ 用户 ID: {result['user_id']}")
+            log("INFO", f"  ✓ 用户名: {result['username']}")
+            log("INFO", f"  ✓ quota: {result['quota']}")
 
         except PlaywrightTimeoutError as e:
             log("ERROR", f"页面操作超时: {e}")
@@ -370,8 +341,6 @@ def format_balance(quota: int) -> str:
     if quota is None:
         return "N/A"
     balance = quota / 500000
-    if balance == int(balance):
-        return f"{int(balance)}$"
     return f"{balance:.2f}$"
 
 def run_checkin():

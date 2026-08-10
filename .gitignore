@@ -36,8 +36,10 @@ newapi-checkin/
 # Test files
 test_local.py
 test_local.sh
+tests/
 
 # Docs (temporary)
 DEPLOY_CHECKLIST.md
 FINAL_CONFIRMATION.md
 QUICKSTART.md
+PROGRESS.md
