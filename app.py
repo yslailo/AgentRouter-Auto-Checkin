@@ -49,42 +49,76 @@ def send_telegram(message: str) -> bool:
         log("ERROR", f"Telegram 发送失败: {e}")
         return False
 
-def wait_for_waf_ready(page, timeout_ms: int = 60000) -> bool:
+def wait_for_waf_ready(page, context=None, timeout_ms: int = 45000) -> bool:
     """
     等待 WAF / 人机验证自动通过，直到出现真实登录界面。
-    部分站点在访问时会先展示验证码/挑战页，自动通过后才会渲染登录表单。
+    阿里云 WAF（acw_sc__v2 等）会在挑战页运行 JS 生成验证 Cookie，
+    一旦 Cookie 生成而页面未自动跳转，则主动刷新进入真实页面。
     """
+    WAF_COOKIE_NAMES = ("acw_tc", "cdn_sec_tc", "acw_sc__v2", "__jsluid_s", "__cf_bm")
     log("INFO", "检测 WAF / 人机验证状态...")
     deadline = time.time() + timeout_ms / 1000.0
+    start_time = time.time()
+    challenge_logged = False
+    reload_count = 0
+    last_reload_time = 0.0
+    last_progress_log = 0
+
     while time.time() < deadline:
-        state = page.evaluate("""
-            () => {
-                const bodyText = (document.body && document.body.innerText) || '';
-                const hasInputs = document.querySelectorAll('input').length > 0;
-                const hasLoginButton = /Sign in with Email|Log In|登录/.test(bodyText);
-                const challengeSelectors = [
-                    '#challenge-form', '.cf-challenge', '#cf-challenge-running',
-                    'iframe[src*="challenges.cloudflare.com"]',
-                    '[class*="turnstile"]', '[class*="captcha"]'
-                ];
-                const isChallenge = challengeSelectors.some(sel => !!document.querySelector(sel))
-                    || /challenge|verify you are human|attention required/i.test(bodyText.slice(0, 300));
-                return {
-                    hasInputs,
-                    hasLoginButton,
-                    isChallenge,
-                    readyState: document.readyState,
-                    url: location.href
-                };
-            }
-        """)
+        try:
+            state = page.evaluate("""
+                () => {
+                    const bodyText = (document.body && document.body.innerText) || '';
+                    const hasInputs = document.querySelectorAll('input').length > 0;
+                    const hasLoginButton = /Sign in with Email|Log In|登录/.test(bodyText);
+                    const challengeSelectors = [
+                        '#challenge-form', '.cf-challenge', '#cf-challenge-running',
+                        'iframe[src*="challenges.cloudflare.com"]',
+                        '[class*="turnstile"]', '[class*="captcha"]'
+                    ];
+                    const isChallenge = challengeSelectors.some(sel => !!document.querySelector(sel))
+                        || /challenge|verify you are human|attention required|verification/i.test(bodyText.slice(0, 300))
+                        || document.title.toLowerCase().includes('verification');
+                    return {
+                        hasInputs,
+                        hasLoginButton,
+                        isChallenge,
+                        readyState: document.readyState,
+                        url: location.href
+                    };
+                }
+            """)
+        except Exception:
+            page.wait_for_timeout(1000)
+            continue
 
         if state.get("hasInputs") or state.get("hasLoginButton"):
             log("INFO", "WAF 验证通过，登录界面已就绪")
             return True
 
         if state.get("isChallenge"):
-            log("WARN", "检测到人机验证/挑战页，等待自动通过...")
+            if not challenge_logged:
+                log("WARN", "检测到人机验证/挑战页，等待其自动通过...")
+                challenge_logged = True
+
+            elapsed = int(time.time() - start_time)
+
+            # WAF Cookie 已生成但页面仍停留在挑战页时，主动刷新进入真实页面
+            if context is not None and reload_count < 3 and (time.time() - last_reload_time) >= 10:
+                try:
+                    cookie_names = {c.get("name") for c in context.cookies()}
+                    if any(name in cookie_names for name in WAF_COOKIE_NAMES):
+                        log("INFO", "WAF Cookie 已生成，刷新页面进入登录界面...")
+                        page.reload(wait_until="domcontentloaded", timeout=30000)
+                        reload_count += 1
+                        last_reload_time = time.time()
+                except Exception:
+                    pass
+
+            # 每 10 秒汇报一次进度，避免刷屏
+            if elapsed >= 10 and elapsed - last_progress_log >= 10:
+                log("INFO", f"  仍在等待 WAF 验证通过（已等待 {elapsed}s）...")
+                last_progress_log = elapsed
 
         page.wait_for_timeout(1000)
 
@@ -186,7 +220,7 @@ def browser_login_complete() -> dict | None:
 
             # Step 2: 等待 WAF / 人机验证自动通过，直到登录界面渲染完成
             log("INFO", "Step 2: 等待页面渲染及 WAF 验证通过...")
-            wait_for_waf_ready(page, timeout_ms=60000)
+            wait_for_waf_ready(page, context=context, timeout_ms=45000)
 
             # 检查页面状态
             page_info = page.evaluate("""
