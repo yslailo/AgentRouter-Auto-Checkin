@@ -25,7 +25,11 @@
 |------|-------|------|
 | `USERNAME` | 你的邮箱 | AgentRouter 登录邮箱 |
 | `PASSWORD` | 你的密码 | AgentRouter 登录密码 |
-| `NODE_LINK` | 代理节点链接 | 支持 vmess:// / vless:// / trojan:// / hysteria2:// / socks5:// |
+| `NODE_LINK` | 代理节点链接 | 支持 vmess:// / vless:// / trojan:// / hysteria2:// / socks5://，也支持订阅 URL |
+
+> **代理配置说明**：`NODE_LINK` 可填单个节点，也可填订阅 URL（返回 base64 或明文的节点列表）。
+> 若不配置 `NODE_LINK`，脚本默认使用内置订阅地址（可通过 Variables 变量 `PROXY_CONFIG_URL` 覆盖）。
+> 脚本会自动**逐节点测试连通性并选择第一个可用节点**，避免单个节点失效导致登录失败。
 
 **示例**：
 ```
@@ -34,11 +38,13 @@ vless://uuid@host:port?type=ws&security=tls&sni=example.com
 trojan://password@host:port?type=ws&sni=example.com
 hysteria2://auth@host:port?sni=example.com
 socks5://user:pass@host:port
+订阅地址: https://example.com/subscription
 ```
 
 **工作原理**：
 - 脚本自动下载 [sing-box](https://github.com/SagerNet/sing-box)
-- 解析节点配置并生成 sing-box 配置
+- 拉取并解码代理订阅，解析出所有节点
+- 逐节点启动本地代理并测试连通性，自动选择可用节点
 - 启动本地 SOCKS5 代理（`socks5://127.0.0.1:1080`）
 - Playwright 通过本地代理访问 AgentRouter
 ---

@@ -59,10 +59,11 @@ jobs:
           # 安装浏览器（--with-deps 会自动 apt install）
           playwright install --with-deps chromium
 
-      # ---------- 设置代理（如果配置了 NODE_LINK）----------
+      # ---------- 设置代理（自动拉取订阅并选择可用节点）----------
       - name: Setup Proxy
         env:
           NODE_LINK: ${{ secrets.NODE_LINK }}
+          PROXY_CONFIG_URL: ${{ vars.PROXY_CONFIG_URL || 'https://raw.githubusercontent.com/hello-world-1989/cn-news/main/end-gfw-together' }}
         run: |
           chmod +x setup-proxy.sh
           bash setup-proxy.sh
