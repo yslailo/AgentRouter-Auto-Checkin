@@ -49,6 +49,96 @@ def send_telegram(message: str) -> bool:
         log("ERROR", f"Telegram 发送失败: {e}")
         return False
 
+def wait_for_waf_ready(page, timeout_ms: int = 60000) -> bool:
+    """
+    等待 WAF / 人机验证自动通过，直到出现真实登录界面。
+    部分站点在访问时会先展示验证码/挑战页，自动通过后才会渲染登录表单。
+    """
+    log("INFO", "检测 WAF / 人机验证状态...")
+    deadline = time.time() + timeout_ms / 1000.0
+    while time.time() < deadline:
+        state = page.evaluate("""
+            () => {
+                const bodyText = (document.body && document.body.innerText) || '';
+                const hasInputs = document.querySelectorAll('input').length > 0;
+                const hasLoginButton = /Sign in with Email|Log In|登录/.test(bodyText);
+                const challengeSelectors = [
+                    '#challenge-form', '.cf-challenge', '#cf-challenge-running',
+                    'iframe[src*="challenges.cloudflare.com"]',
+                    '[class*="turnstile"]', '[class*="captcha"]'
+                ];
+                const isChallenge = challengeSelectors.some(sel => !!document.querySelector(sel))
+                    || /challenge|verify you are human|attention required/i.test(bodyText.slice(0, 300));
+                return {
+                    hasInputs,
+                    hasLoginButton,
+                    isChallenge,
+                    readyState: document.readyState,
+                    url: location.href
+                };
+            }
+        """)
+
+        if state.get("hasInputs") or state.get("hasLoginButton"):
+            log("INFO", "WAF 验证通过，登录界面已就绪")
+            return True
+
+        if state.get("isChallenge"):
+            log("WARN", "检测到人机验证/挑战页，等待自动通过...")
+
+        page.wait_for_timeout(1000)
+
+    log("WARN", "等待 WAF 验证超时，继续尝试登录...")
+    return False
+
+
+def click_email_login_button(page, timeout_ms: int = 15000) -> bool:
+    """
+    点击 "Sign in with Email or Username" 切换按钮，
+    点击后页面才会出现用户名/密码输入框。
+    """
+    log("INFO", "切换邮箱/用户名登录方式...")
+
+    # 优先使用 Playwright 文本定位
+    try:
+        target = page.get_by_text("Sign in with Email or Username")
+        target.first.wait_for(state="visible", timeout=timeout_ms)
+        target.first.click(timeout=10000)
+        log("INFO", "  ✓ 已点击邮箱/用户名登录按钮")
+        return True
+    except Exception:
+        pass
+
+    # 回退：通过 JS 在按钮/选项卡中查找并点击
+    try:
+        clicked = page.evaluate("""
+            () => {
+                const candidates = Array.from(
+                    document.querySelectorAll('button, [role="tab"], a, span, div')
+                );
+                const target = candidates.find(el => {
+                    const text = (el.innerText || '').trim();
+                    return text === 'Sign in with Email or Username'
+                        || text.includes('Email or Username')
+                        || text === 'Sign in with Email';
+                });
+                if (target) {
+                    target.click();
+                    return true;
+                }
+                return false;
+            }
+        """)
+        if clicked:
+            log("INFO", "  ✓ 已通过脚本点击邮箱/用户名登录按钮")
+            return True
+    except Exception:
+        pass
+
+    log("WARN", "未找到邮箱/用户名登录按钮，可能表单已直接显示")
+    return False
+
+
 def browser_login_complete() -> dict | None:
     """
     使用 Playwright 完成整个登录流程。
@@ -92,11 +182,11 @@ def browser_login_complete() -> dict | None:
         try:
             # Step 1: 访问登录页面
             log("INFO", "Step 1: 访问登录页面...")
-            page.goto(f"{SITE_URL}/login", wait_until="networkidle", timeout=30000)
+            page.goto(f"{SITE_URL}/login", wait_until="domcontentloaded", timeout=45000)
 
-            # 等待页面完全加载
-            log("INFO", "等待页面渲染...")
-            page.wait_for_timeout(3000)  # 增加到 3 秒
+            # Step 2: 等待 WAF / 人机验证自动通过，直到登录界面渲染完成
+            log("INFO", "Step 2: 等待页面渲染及 WAF 验证通过...")
+            wait_for_waf_ready(page, timeout_ms=60000)
 
             # 检查页面状态
             page_info = page.evaluate("""
@@ -105,7 +195,7 @@ def browser_login_complete() -> dict | None:
                         url: window.location.href,
                         title: document.title,
                         readyState: document.readyState,
-                        bodyText: document.body?.innerText?.substring(0, 200) || '',
+                        bodyText: document.body?.innerText?.substring(0, 300) || '',
                         hasInputs: document.querySelectorAll('input').length,
                         hasButtons: document.querySelectorAll('button').length,
                         hasForm: !!document.querySelector('form'),
@@ -119,23 +209,27 @@ def browser_login_complete() -> dict | None:
             log("INFO", f"  输入框数量: {page_info.get('hasInputs')}")
             log("INFO", f"  按钮数量: {page_info.get('hasButtons')}")
 
-            # 如果页面不对，截图并报错
+            # 如果页面没有输入框，尝试点击 "Sign in with Email or Username" 切换登录方式
             if page_info.get('hasInputs') == 0:
-                log("ERROR", f"页面没有输入框！可能被重定向或拦截")
-                log("ERROR", f"页面文本预览: {page_info.get('bodyText')}")
-                log("ERROR", f"HTML 预览: {page_info.get('htmlPreview')}")
+                if not click_email_login_button(page):
+                    log("ERROR", f"页面没有输入框且未找到登录切换按钮！")
+                    log("ERROR", f"页面文本预览: {page_info.get('bodyText')}")
+                    log("ERROR", f"HTML 预览: {page_info.get('htmlPreview')}")
 
-                try:
-                    screenshot_path = "page_error.png"
-                    page.screenshot(path=screenshot_path, full_page=True)
-                    log("INFO", f"已保存页面截图: {screenshot_path}")
-                except:
-                    pass
+                    try:
+                        screenshot_path = "page_error.png"
+                        page.screenshot(path=screenshot_path, full_page=True)
+                        log("INFO", f"已保存页面截图: {screenshot_path}")
+                    except:
+                        pass
 
-                raise Exception(f"登录页面加载异常，没有找到表单元素")
+                    raise Exception(f"登录页面加载异常，没有找到表单元素")
 
-            # Step 2: 填写表单（使用更宽松的等待策略）
-            log("INFO", "Step 2: 填写登录表单...")
+                # 点击切换后等待表单出现
+                page.wait_for_timeout(1500)
+
+            # Step 3: 填写表单（使用更宽松的等待策略）
+            log("INFO", "Step 3: 填写登录表单...")
 
             # 使用 page.evaluate 等待元素真正可见
             wait_result = page.evaluate("""
@@ -202,8 +296,8 @@ def browser_login_complete() -> dict | None:
             # 等待一下
             page.wait_for_timeout(1000)
 
-            # Step 3: 点击提交按钮
-            log("INFO", "Step 3: 点击提交按钮...")
+            # Step 4: 点击提交按钮
+            log("INFO", "Step 4: 点击提交按钮...")
             try:
                 submit_locator = page.locator('button[type="submit"]')
                 submit_locator.wait_for(state="visible", timeout=5000)
@@ -212,8 +306,8 @@ def browser_login_complete() -> dict | None:
             except Exception as e:
                 raise Exception(f"点击提交按钮失败: {e}")
 
-            # Step 4: 等待登录完成
-            log("INFO", "Step 4: 等待登录响应...")
+            # Step 5: 等待登录完成
+            log("INFO", "Step 5: 等待登录响应...")
             page.wait_for_timeout(3000)
 
             # 检查是否有滑块验证
@@ -228,8 +322,8 @@ def browser_login_complete() -> dict | None:
             current_url = page.url
             log("INFO", f"  当前 URL: {current_url}")
 
-            # Step 5: 使用登录后的浏览器会话调用用户信息接口
-            log("INFO", "Step 5: 获取用户信息...")
+            # Step 6: 使用登录后的浏览器会话调用用户信息接口
+            log("INFO", "Step 6: 获取用户信息...")
 
             api_result = page.evaluate("""
                 async () => {
