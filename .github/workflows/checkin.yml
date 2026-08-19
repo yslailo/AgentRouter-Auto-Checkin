@@ -18,7 +18,7 @@ jobs:
     steps:
       # ---------- 检出代码 ----------
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
 
       # ---------- 安装 Python ----------
       - name: Setup Python
@@ -26,10 +26,37 @@ jobs:
         with:
           python-version: '3.11'
 
-      # ---------- 安装 Python 依赖 和 Playwright 浏览器  ----------
+      # ---------- 安装 Python 依赖 ----------
       - name: Install Python dependencies
         run: |
           pip install requests playwright pynacl
+
+      # ---------- 缓存 Playwright 浏览器 ----------
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      # ---------- 安装 Playwright 浏览器（修复 apt 源） ----------
+      - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: |
+          # 更换为官方 Ubuntu 主源，避免 azure 镜像挂掉
+          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu/|http://archive.ubuntu.com/ubuntu/|g' /etc/apt/sources.list.d/*.list || true
+          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu/|http://archive.ubuntu.com/ubuntu/|g' /etc/apt/sources.list || true
+          
+          # 非交互模式，避免弹窗阻塞
+          export DEBIAN_FRONTEND=noninteractive
+          
+          # 清理并重试 apt（--fix-missing 处理网络抖动）
+          sudo apt-get clean
+          sudo apt-get update -o Acquire::Retries=3 || true
+          
+          # 安装浏览器（--with-deps 会自动 apt install）
           playwright install --with-deps chromium
 
       # ---------- 设置代理（如果配置了 NODE_LINK）----------
