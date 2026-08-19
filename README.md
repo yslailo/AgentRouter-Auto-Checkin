@@ -25,20 +25,18 @@
 |------|-------|------|
 | `USERNAME` | 你的邮箱 | AgentRouter 登录邮箱 |
 | `PASSWORD` | 你的密码 | AgentRouter 登录密码 |
-| `NODE_LINK` | 代理节点链接 | 支持 vmess:// / vless:// / trojan:// / hysteria2:// / socks5://，也支持订阅 URL |
+| `PROXY_CONFIG_URL` | 订阅地址 URL | 代理订阅地址（返回 base64 或明文的节点列表） |
 
-> **代理配置说明**：`NODE_LINK` 可填单个节点，也可填订阅 URL（返回 base64 或明文的节点列表）。
-> 若不配置 `NODE_LINK`，脚本默认使用内置订阅地址（可通过 Variables 变量 `PROXY_CONFIG_URL` 覆盖）。
-> 脚本会自动**逐节点测试连通性并选择第一个可用节点**，避免单个节点失效导致登录失败。
+> **代理配置说明**：`PROXY_CONFIG_URL` 填代理订阅地址，脚本会自动拉取、解码并**逐节点测试连通性，自动选择第一个可用节点**。
+> 若配置了 `NODE_LINK`（单节点或订阅 URL），则以 `NODE_LINK` 为准，未配置时才使用 `PROXY_CONFIG_URL`。
 
-**示例**：
+**`NODE_LINK`（可选）示例**：
 ```
 vmess://ew0KICAidiI6ICIyIiwNCiAgInBzIjogIuWPsOa5vummmue4rzAxIiwNCi...
 vless://uuid@host:port?type=ws&security=tls&sni=example.com
 trojan://password@host:port?type=ws&sni=example.com
 hysteria2://auth@host:port?sni=example.com
 socks5://user:pass@host:port
-订阅地址: https://example.com/subscription
 ```
 
 **工作原理**：

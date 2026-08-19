@@ -63,7 +63,7 @@ jobs:
       - name: Setup Proxy
         env:
           NODE_LINK: ${{ secrets.NODE_LINK }}
-          PROXY_CONFIG_URL: ${{ vars.PROXY_CONFIG_URL || 'https://raw.githubusercontent.com/hello-world-1989/cn-news/main/end-gfw-together' }}
+          PROXY_CONFIG_URL: ${{ secrets.PROXY_CONFIG_URL }}
         run: |
           chmod +x setup-proxy.sh
           bash setup-proxy.sh
